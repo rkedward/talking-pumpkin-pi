@@ -131,6 +131,7 @@ setInterval(async () => {
     if (s.paused) line += " · PAUSED";
     if (s.paused !== undefined && $("pauseBtn")) $("pauseBtn").textContent = s.paused ? "▶ Resume" : "⏸ Pause";
     if (s.fake) line += " · FAKE MODE";
+    if (s.version) line += ` · version ${s.version}`;
     stateEl.textContent = line;
   } catch { stateEl.textContent = state; }
 }, 500);

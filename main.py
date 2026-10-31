@@ -7,6 +7,8 @@ Run:  python3 main.py      then open http://localhost:8000 (the Pi installer doe
 
 import collections
 import contextlib
+import functools
+import os
 import subprocess
 import json
 import math
@@ -1433,14 +1435,25 @@ class Pumpkin:
                                           "volume": Speaker.volume, "wake_bar": self.listener.wake_bar,
                                           "wake_flag": self.listener.wake_flag}))
 
+    @functools.cached_property
+    def version(self):
+        """The installed code: git commit and when it was made (shown on the control page)."""
+        try:
+            out = subprocess.run(["git", "log", "-1", "--format=%h %cd", "--date=format-local:%b %d %H:%M"],
+                                 cwd=os.path.dirname(os.path.abspath(__file__)), capture_output=True, text=True, timeout=5).stdout.strip()
+            return out or "unknown"
+        except Exception:
+            return "unknown"
+
     def status(self):
         if not hasattr(self, "listener"):   # the debug panel can ask while the camera and mic are still starting
-            return {"state": "starting", "people": 0, "volume": round(Speaker.volume * 100)}
+            return {"state": "starting", "people": 0, "volume": round(Speaker.volume * 100), "version": self.version}
         people, _, _, _ = self.vision.state()
         st = {"state": self.state, "people": len(people), "detect_ms": round(self.vision.detect_ms),
               "fake": self.cfg["claude"]["fake"], "model": self.cfg["claude"]["model"],
               "mic_muted": self.mic.user_muted,
               "paused": Speaker.paused,
+              "version": self.version,
               "wake_bar": round(self.listener.wake_bar) if self.listener.wake_bar else 0,
               "wake_auto": round(max(self.listener.noise * 1.8, 50.0)),
               "hearing_test": bool(self.listener.test),
