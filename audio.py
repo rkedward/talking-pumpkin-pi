@@ -162,7 +162,7 @@ class Listener:
         self.timing = {}
         self.on_busy = None            # called with True/False around speech recognition (pauses the camera)
         self.log = None                # optional: for a line every 10 s about hearing over the idle music
-        self.wake_bar = None           # hearing threshold for waking (mic level); None = automatic (room noise x 1.8, >= 50)
+        self.wake_bar = None           # hearing threshold for waking (mic level); None = automatic (just above the room and music level, >= 50)
         self.wake_flag = True          # also need the mic array's voice light (off if the test finds it misses voices)
         self.need = None               # how loud a voice must be to wake him right now (for the level meter)
         self.test = None               # the hearing test: {"until", "frames", "flags", "done"} while it records
@@ -321,7 +321,7 @@ class Listener:
                 loudest = max(loudest, rms)
                 if clock >= report and self.log:
                     report = clock + 10
-                    need = ((max(self.noise * 1.3, self.wake_bar) if self.wake_bar else max(self.noise * 1.8, 50.0))
+                    need = ((self.wake_bar if self.wake_bar else max(self.noise * 1.15, 50.0))
                             if voice else
                             max(self.noise * float(self.cfg['start_ratio']), float(self.cfg['min_rms']), echo * margin))
                     self.log(f"(over the music: room noise {self.noise:.0f}, music echo {echo:.0f}, loudest {loudest:.0f}; "
@@ -354,7 +354,9 @@ class Listener:
                 # The mic array says someone's talking: a low bar (its echo-cancelled channel turns voices down
                 # a lot while it plays music), and Silero VAD below throws out typing and clicks.
                 flag = voice()
-                basic = max(self.noise * 1.3, self.wake_bar) if self.wake_bar else max(self.noise * 1.8, 50.0)
+                # the slider / hearing test value is used as is; automatic sits just above the room (and music)
+                # level, since the voice light already ignores the speaker and Silero throws out the rest
+                basic = self.wake_bar if self.wake_bar else max(self.noise * 1.15, 50.0)
                 loud = rms > basic and (flag or not self.wake_flag)
                 self.need = basic
                 if flag:
@@ -366,7 +368,7 @@ class Listener:
             if not speech:
                 pre_roll = (pre_roll + [frame])[-10:]
                 voiced = (voiced + [loud])[-8:]
-                if sum(voiced) >= 5:   # mostly loud for ~a quarter second: knocks, clatter and typing aren't words
+                if sum(voiced) >= 4:   # loud for half of a quarter second: knocks, clatter and typing aren't words
                     speech, silent, chunks = True, 0, list(pre_roll)
             else:
                 chunks.append(frame)

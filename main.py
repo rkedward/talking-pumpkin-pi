@@ -821,7 +821,7 @@ class Pumpkin:
         # between the two, leaning low (easy to wake: Silero and the wake words throw out the rest)
         bar = max(20.0, noise_lvl * 1.2, min(voice_lvl * 0.5, (voice_lvl * noise_lvl) ** 0.5))
         bar = min(bar, voice_lvl * 0.8)                                  # never above their own voice
-        old = self.listener.wake_bar or max(self.listener.noise * 1.8, 50.0)
+        old = self.listener.wake_bar or max(self.listener.noise * 1.15, 50.0)
         self.listener.wake_bar = bar
         self.listener.wake_flag = flag_on >= 0.5
         self._save()
@@ -1458,7 +1458,7 @@ class Pumpkin:
               "mic_need": round(self.listener.need) if self.listener.need and not self.visit_active else None,
               "voice_light": bool(self.doa and self.doa.available and time.time() - self.doa.voice_at < 0.5),
               "wake_bar": round(self.listener.wake_bar) if self.listener.wake_bar else 0,
-              "wake_auto": round(max(self.listener.noise * 1.8, 50.0)),
+              "wake_auto": round(max(self.listener.noise * 1.15, 50.0)),
               "hearing_test": bool(self.listener.test),
               "volume": round(Speaker.volume * 100),
               "creature": (self.show.on_stage or {}).get("name") if self.show else None,
