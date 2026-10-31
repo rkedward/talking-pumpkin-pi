@@ -52,6 +52,7 @@ class Microphone:
         self.through_speech = False   # true while barge-in listens during speech: speaking doesn't mute
         self.heard_level = 0.0        # loudness of the pumpkin's voice coming out of the speaker right now
         self.recording = None         # a list while the echo test records
+        self.levels = collections.deque(maxlen=40)   # (time, loudness) of recent frames, for the level meter
         self.name = ""
         self.ok = False
         if not sd:
@@ -81,12 +82,19 @@ class Microphone:
     def _callback(self, indata, frames, t, status):
         if self.recording is not None:          # echo test: every channel, never muted
             self.recording.append((time.time(), indata.copy()))
+        frame = indata[:, self.channel]
+        self.levels.append((time.time(), float(np.sqrt(np.mean(frame.astype(np.float32) ** 2)))))
         if self.user_muted or time.time() < self.muted_until:
             return
         try:
-            self.frames.put_nowait(indata[:, self.channel].copy())
+            self.frames.put_nowait(frame.copy())
         except queue.Full:
             pass
+
+    def level(self, window=0.5):
+        """The loudest the mic heard in the last half second (same scale as the wake threshold)."""
+        now = time.time()
+        return max((lv for t, lv in list(self.levels) if now - t <= window), default=0.0)
 
     @property
     def is_array(self):
@@ -156,6 +164,7 @@ class Listener:
         self.log = None                # optional: for a line every 10 s about hearing over the idle music
         self.wake_bar = None           # hearing threshold for waking (mic level); None = automatic (room noise x 1.8, >= 50)
         self.wake_flag = True          # also need the mic array's voice light (off if the test finds it misses voices)
+        self.need = None               # how loud a voice must be to wake him right now (for the level meter)
         self.test = None               # the hearing test: {"until", "frames", "flags", "done"} while it records
 
     # ---- barge-in: someone talks over the pumpkin -------------------------------------------------
@@ -340,17 +349,20 @@ class Listener:
                 elif sharp:
                     burst, peak = 1, rms
                 prev = rms
+            self.need = None
             if voice:
                 # The mic array says someone's talking: a low bar (its echo-cancelled channel turns voices down
                 # a lot while it plays music), and Silero VAD below throws out typing and clicks.
                 flag = voice()
                 basic = max(self.noise * 1.3, self.wake_bar) if self.wake_bar else max(self.noise * 1.8, 50.0)
                 loud = rms > basic and (flag or not self.wake_flag)
+                self.need = basic
                 if flag:
                     flagged, flag_max = flagged + 1, max(flag_max, rms)
             else:
                 basic = max(self.noise * float(self.cfg["start_ratio"]), float(self.cfg["min_rms"]))
                 loud = rms > max(basic, echo * margin)
+                self.need = max(basic, echo * margin)
             if not speech:
                 pre_roll = (pre_roll + [frame])[-10:]
                 voiced = (voiced + [loud])[-8:]

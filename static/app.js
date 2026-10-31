@@ -127,6 +127,17 @@ setInterval(async () => {
       $("wakeVal").textContent = s.wake_bar ? `${s.wake_bar}` : `auto (${s.wake_auto})`;
     }
     if ($("hearBtn")) $("hearBtn").textContent = s.hearing_test ? "🎤 Listening… say trick or treat" : "🎤 Hearing test";
+    if (s.mic_level !== undefined) {
+      // a log scale, so a whisper and a shout both fit: 10 .. 5000
+      const pos = (v) => Math.max(0, Math.min(100, (Math.log10(Math.max(v, 10)) - 1) / (Math.log10(5000) - 1) * 100));
+      $("meterFill").style.width = `${pos(s.mic_level)}%`;
+      const loud = s.mic_need && s.mic_level > s.mic_need;
+      $("meterFill").style.background = loud ? (s.voice_light ? "#4c4" : "#ca3") : "#468";
+      $("meterNeed").style.display = s.mic_need ? "block" : "none";
+      if (s.mic_need) $("meterNeed").style.left = `${pos(s.mic_need)}%`;
+      $("meterVal").textContent = s.mic_need ? `${s.mic_level} / ${s.mic_need}` : `${s.mic_level}`;
+      $("voiceDot").style.background = s.voice_light ? "#4c4" : "#333";
+    }
     if (s.mic_muted) line += " · MIC MUTED";
     if (s.paused) line += " · PAUSED";
     if (s.paused !== undefined && $("pauseBtn")) $("pauseBtn").textContent = s.paused ? "▶ Resume" : "⏸ Pause";
@@ -134,7 +145,7 @@ setInterval(async () => {
     if (s.version) line += ` · version ${s.version}`;
     stateEl.textContent = line;
   } catch { stateEl.textContent = state; }
-}, 500);
+}, 250);
 
 // ---- Render loop ----
 let lastFrame = performance.now();
