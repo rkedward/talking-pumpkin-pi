@@ -267,7 +267,7 @@ class Listener:
 
     # ---- waiting for a visitor (sound-triggered visits) -------------------------------------------------
     def wait_for_visitor(self, should_stop, is_wake, stt=None, knock=True, knock_ratio=8.0, knocks=2,
-                         music=lambda: False, voice=None, retry_stt=None):
+                         music=lambda: False, voice=None):
         """Between visits: listen for a short greeting ("trick or treat", "hello") or a knock on the door.
         Short voiced bursts are transcribed with `stt` (the Pi's own whisper, so nothing leaves the porch
         before a visit) and checked with is_wake(text). Returns ("words", text), ("knock", None), or None
@@ -391,25 +391,36 @@ class Listener:
                                      "info")
                         continue
                     self._keep_clip(audio)
+                    other = self._other_channel(len(audio) / self.mic.rate)
                     try:
                         text = stt.transcribe(audio, self.mic.rate)
                     except Exception:
                         text = ""
-                    if not (text and is_wake(text)) and retry_stt is not None and retry_stt is not stt \
-                            and (voice_ms is None or voice_ms >= 400):
-                        # a clear voice but no wake word: the other recognizer gets a go (over loud music the
-                        # cloud one sometimes returns nothing, or "Kids.")
+                    if not (text and is_wake(text)) and other is not None and (voice_ms is None or voice_ms >= 400):
+                        # A clear voice but no wake word. Over loud music the echo-cancelled channel can garble
+                        # voices ("context:", "Kids."), while the array's speech-recognition channel (music and
+                        # all) still gets "trick or treat": give that one a listen too.
                         try:
-                            again = retry_stt.transcribe(audio, self.mic.rate)
+                            again = stt.transcribe(other, self.mic.rate)
                         except Exception:
                             again = ""
-                        if again and self.log:
-                            self.log(f"(second listen: {again!r}, first heard {text!r})", "info")
+                        if self.log:
+                            self.log(f"(second listen, other mic channel: {again!r}; first heard {text!r})", "info")
                         text = again or text
                     self.mic.flush()   # what came in while transcribing is stale
                     if text and is_wake(text):
                         return ("words", text)
         return None
+
+    def _other_channel(self, seconds):
+        """The same moment from the mic array's other channel (the XVF3800's speech-recognition one when
+        listening on the echo-cancelled one), as floats; None on a single-channel mic."""
+        cut = time.time() - seconds - 0.3
+        raw = [d for t, d in list(self.mic.raw) if t >= cut]
+        if not raw or raw[0].shape[1] < 2:
+            return None
+        ch = 1 if self.mic.channel == 0 else 0
+        return np.concatenate(raw)[:, ch].astype(np.float32) / 32768.0
 
     def _keep_clip(self, audio, keep=12):
         """The last few sounds he tried to understand between visits, as wav files in wakeclips/ (to check

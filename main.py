@@ -911,8 +911,7 @@ class Pumpkin:
             got = self.listener.wait_for_visitor(lambda: self.force_greet or not self.typed.empty(), is_wake,
                                                  stt=wake_stt, knock=bool(v["knock"]),
                                                  knock_ratio=float(v["knock_ratio"]), knocks=int(v["knocks"]),
-                                                 music=lambda: self._idle_playing, voice=self._array_voice(),
-                                                 retry_stt=self.local_stt)
+                                                 music=lambda: self._idle_playing, voice=self._array_voice())
             trigger, said = got if got else ("remote", None)
             if trigger == "remote" and not self.force_greet and not self.typed.empty():
                 trigger, said = "words", self.typed.get_nowait()
