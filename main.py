@@ -821,14 +821,12 @@ class Pumpkin:
         # between the two, leaning low (easy to wake: Silero and the wake words throw out the rest)
         bar = max(20.0, noise_lvl * 1.2, min(voice_lvl * 0.5, (voice_lvl * noise_lvl) ** 0.5))
         bar = min(bar, voice_lvl * 0.8)                                  # never above their own voice
-        old = self.listener.wake_bar or max(self.listener.noise * 1.15, 50.0)
-        self.listener.wake_bar = bar
-        self.listener.wake_flag = flag_on >= 0.5
-        self._save()
+        now = self.listener.wake_bar or max(self.listener.noise * 1.15, 50.0)
+        # it only suggests: the threshold stays where it's set until someone moves the slider
         self.log(f"🎤 Hearing test: your voice {voice_lvl:.0f}, other sounds up to {noise_lvl:.0f}, "
                  f"mic array's voice light on {flag_on:.0%} of the time; heard {heard!r}. "
-                 f"Threshold {old:.0f} → {bar:.0f}"
-                 + ("" if self.listener.wake_flag else " (and not waiting for the voice light, which missed you)")
+                 f"Threshold is {now:.0f}; suggested {bar:.0f} (move the slider to use it)"
+                 + ("" if flag_on >= 0.5 else ". The voice light missed you most of the time")
                  + (". Your voice was barely above the other sounds: move closer or turn the music down."
                     if voice_lvl < noise_lvl * 1.3 else "."))
 
