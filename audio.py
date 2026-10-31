@@ -256,7 +256,7 @@ class Listener:
 
     # ---- waiting for a visitor (sound-triggered visits) -------------------------------------------------
     def wait_for_visitor(self, should_stop, is_wake, stt=None, knock=True, knock_ratio=8.0, knocks=2,
-                         music=lambda: False, voice=None):
+                         music=lambda: False, voice=None, retry_stt=None):
         """Between visits: listen for a short greeting ("trick or treat", "hello") or a knock on the door.
         Short voiced bursts are transcribed with `stt` (the Pi's own whisper, so nothing leaves the porch
         before a visit) and checked with is_wake(text). Returns ("words", text), ("knock", None), or None
@@ -376,6 +376,17 @@ class Listener:
                         text = stt.transcribe(audio, self.mic.rate)
                     except Exception:
                         text = ""
+                    if not (text and is_wake(text)) and retry_stt is not None and retry_stt is not stt \
+                            and (voice_ms is None or voice_ms >= 400):
+                        # a clear voice but no wake word: the other recognizer gets a go (over loud music the
+                        # cloud one sometimes returns nothing, or "Kids.")
+                        try:
+                            again = retry_stt.transcribe(audio, self.mic.rate)
+                        except Exception:
+                            again = ""
+                        if again and self.log:
+                            self.log(f"(second listen: {again!r}, first heard {text!r})", "info")
+                        text = again or text
                     self.mic.flush()   # what came in while transcribing is stale
                     if text and is_wake(text):
                         return ("words", text)
@@ -468,8 +479,9 @@ def _clean_transcript(text):
     text = re.sub(r"\[[^\]]*\]|\([^)]*\)|\*[^*]*\*", " ", text or "")
     text = re.sub(r"\s+", " ", text).strip()
     words = " ".join(re.findall(r"[a-z]+", text.lower()))
-    if len(words.split()) >= 3 and f" {words} " in " " + " ".join(re.findall(r"[a-z]+", STT_PROMPT.lower())) + " ":
-        return ""   # three or more words straight out of the prompt: an echo, not a kid
+    prompt = " ".join(re.findall(r"[a-z]+", STT_PROMPT.lower()))
+    if words and ((len(words.split()) >= 3 and f" {words} " in f" {prompt} ") or f"{prompt} ".startswith(words + " ")):
+        return ""   # words straight out of the prompt ("Kids."): an echo, not a kid
     if re.fullmatch(r"[\s\[\](){}*\"']*\w+\s*:[\s\[\](){}*\"']*", text):
         return ""   # a lone "context:" or "transcript:": the recognizer's formatting, not a kid
     if text.lower() in _HALLUCINATIONS or re.fullmatch(r"[\W_]*", text):
