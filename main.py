@@ -680,7 +680,15 @@ class Pumpkin:
                 if vol != 1.0:
                     audio = np.clip(audio.astype(np.float32) * vol, -32768, 32767).astype(np.int16)
                 clip["audio"] = (audio, rate)
-                self.log(f"idle video: {path.name} soundtrack ready ({len(audio) / rate:.0f} s)")
+                # skip the quiet seconds at each end, so one song runs straight into the next
+                block = rate // 10
+                lv = np.sqrt(np.mean(audio[:len(audio) // block * block].reshape(-1, block).astype(np.float32) ** 2, 1))
+                on = np.flatnonzero(lv > max(200.0, lv.max() * 0.03))
+                clip["span"] = ((max(0, on[0] - 3) * block, min(len(audio), (on[-1] + 4) * block))
+                                if len(on) else (0, len(audio)))
+                cut = (len(audio) - (clip["span"][1] - clip["span"][0])) / rate
+                self.log(f"idle video: {path.name} soundtrack ready ({len(audio) / rate:.0f} s"
+                         + (f", skipping {cut:.0f} s of quiet at the ends)" if cut >= 1 else ")"))
             except Exception as exc:
                 self.log(f"idle video: no soundtrack for {path.name} ({type(exc).__name__}: {exc})")
         if self._idle_on and not self._idle_thread:   # it was already showing silently: start the sound
@@ -749,10 +757,12 @@ class Pumpkin:
             i = clips[n % len(clips)]
             clip = self._idle_clips[i]
             audio, rate = clip["audio"]
-            # the page starts the (muted) video at the moment the soundtrack is heard
-            start = time.time() + self.speaker.lead_in + (self.speaker.latency or 0.15) + 0.05
+            a, b = clip.get("span", (0, len(audio)))
+            # the page starts the (muted) video at the moment the soundtrack is heard (from the same spot)
+            start = time.time() + self.speaker.lead_in + (self.speaker.latency or 0.15) + 0.05 - a / rate
             self._idle_clip, self._idle_started = clip, start
             self.hub.publish({"t": "idle", "on": True, "fade": fade, "start": start, "clip": i})
+            audio = audio[a:b]
             if aec:
                 self.mic.through_speech = True   # keep hearing "trick or treat" over the music
             self._idle_playing = True
