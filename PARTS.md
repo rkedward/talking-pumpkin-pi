@@ -16,7 +16,7 @@ order covers them. Raspberry Pi parts are also sold by other official resellers 
 | 6 | Pi 5 camera cable, 300 mm (200 mm / 500 mm options on the same page) | [Adafruit 5819](https://www.adafruit.com/product/5819) | $3.16 |
 | 7 | reSpeaker XVF3800 4-Mic Array with XIAO ESP32S3 (SKU 114993700, ordered). Needs its USB firmware loaded once, see README. The ReSpeaker USB Mic Array v2.0 also works. | [Seeed Studio](https://www.seeedstudio.com/ReSpeaker-Mic-Array-v2-0.html) (v2.0) | ordered |
 | 8 | Official micro-HDMI to HDMI cable, 1 m | [Adafruit 4302](https://www.adafruit.com/product/4302) | $11.81 |
-| 9 | USB speaker (plays through USB, no headphone jack needed; louder powered USB speakers also work) | [Adafruit 3369](https://www.adafruit.com/product/3369) | $12.50 |
+| 9 | USB speaker (plays through USB, no headphone jack needed; louder powered USB speakers also work). For barge-in (kids can interrupt him) get a powered speaker with a 3.5 mm input instead, plugged into the mic array, see README 1e | [Adafruit 3369](https://www.adafruit.com/product/3369) | $12.50 |
 | 10 | Projector: small LED/"mini" projector with HDMI, 200+ ANSI lumens, short throw if it sits close | [Amazon search](https://www.amazon.com/s?k=mini+projector+hdmi+ansi+lumens) | ~$60-150 |
 | 11 | Pumpkin: uncarved foam craft pumpkin, white or pale orange, 10-13 in | [Amazon search](https://www.amazon.com/s?k=white+foam+craft+pumpkin+large) | ~$15-25 |
 

@@ -17,14 +17,23 @@ flip_vertical = false
 min_height = 0.25              # lower (e.g. 0.15) if kids stand far from the camera
 
 [visit]
-max_turns = 5
-max_visit_s = 90
+max_turns = 3
+max_visit_s = 45
+# trigger = "sound"            # sound: "trick or treat" / hello, a knock, the doorbell or Greet start a visit and
+                               # the camera only takes a picture; camera: person detection starts it (old way)
+# knock_ratio = 8.0            # higher = a knock has to be louder to count
+# quiet_end_s = 12             # quiet this long: "are you still there?", then goodbye
 
 [mic]
 device = "ReSpeaker"           # part of the mic's name; falls back to the default mic
+# barge_in = "auto"            # talk over the pumpkin to interrupt him: auto = on when the speaker is plugged
+                               # into the mic array (output_device = "XVF3800" below); true = try anyway; false = off
+# barge_in_finish = "sentence" # talked over: finish the sentence he's on, then listen ("now" cuts off at once)
 
 [stt]
 model = "base.en"              # tiny.en = faster, small.en = more accurate
+# engine = "openai"            # cloud speech recognition: faster, better with kids, but their voices go to
+                               # OpenAI (needs OPENAI_API_KEY). Whisper on the Pi stays as the backup.
 
 [tts]
 engine = "piper"               # piper | openai | elevenlabs | espeak | none

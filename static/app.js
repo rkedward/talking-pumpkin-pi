@@ -20,6 +20,41 @@ function log(text, cls = "info") {
   logEl.scrollTop = logEl.scrollHeight;
 }
 
+// ---- Idle video (e.g. AtmosFX singing pumpkins) while he waits; the live face takes over for a visit ----
+const idleEl = $("idle");
+let idleOn = false, idleTimer = null, faceHidden = false, paused = false;   // faceHidden: skip drawing (the Pi's CPU goes to the video)
+function idleVideo(ev) {
+  const fade = `${ev.fade ?? 1}s`;
+  idleEl.style.transition = $("face").style.transition = `opacity ${fade}`;
+  clearTimeout(idleTimer);
+  if (!ev.on) {
+    idleOn = false;
+    faceHidden = false;
+    idleEl.style.opacity = 0;
+    $("face").style.opacity = 1;
+    idleTimer = setTimeout(() => { if (!idleOn) idleEl.pause(); }, (ev.fade ?? 1) * 1000 + 100);
+    return;
+  }
+  idleOn = true;
+  const src = `idle/video?clip=${ev.clip ?? 0}`;
+  if (idleEl.getAttribute("src") !== src) { idleEl.setAttribute("src", src); idleEl.load(); }
+  const start = () => {
+    if (ev.start) {            // the brain plays the soundtrack: line the picture up with it
+      idleEl.loop = false;
+      const at = Date.now() / 1000 - ev.start;
+      if (at < 0) { idleTimer = setTimeout(start, -at * 1000); return; }
+      idleEl.currentTime = at;
+    } else {
+      idleEl.loop = true;      // no soundtrack: just loop the picture
+    }
+    if (!paused) idleEl.play().catch(() => {});
+    idleEl.style.opacity = 1;
+    $("face").style.opacity = 0;
+    setTimeout(() => { if (idleOn) faceHidden = true; }, (ev.fade ?? 1) * 1000 + 100);
+  };
+  if (idleEl.readyState >= 1) start(); else idleEl.addEventListener("loadedmetadata", start, { once: true });
+}
+
 // ---- Live state from the brain ----
 function connect() {
   const es = new EventSource("events");
@@ -36,6 +71,15 @@ function connect() {
       Object.assign(face.calib, ev.calib);
     } else if (ev.t === "guide") {
       face.showGuide = ev.on;
+    } else if (ev.t === "idle" && !REMOTE) {
+      idleVideo(ev);
+    } else if (ev.t === "pause") {
+      paused = ev.on;
+      if (idleOn) ev.on ? idleEl.pause() : (idleEl.loop && idleEl.play().catch(() => {}));   // a synced clip restarts from its own "idle" event
+      const b = $("pauseBtn");
+      if (b) b.textContent = ev.on ? "▶ Resume" : "⏸ Pause";
+    } else if (ev.t === "scare") {
+      face.scare(ev.dark_ms, ev.ms);
     } else if (ev.t === "surprise") {
       face.surprise();
     } else if (ev.t === "laugh") {
@@ -78,11 +122,30 @@ setInterval(async () => {
       fillWindows(s.windows, s.windows_on);
     }
     if (s.volume !== undefined && !volDragging) { $("vol").value = s.volume; $("volVal").textContent = `${s.volume}%`; }
+    if (s.wake_bar !== undefined && !wakeDragging) {
+      $("wake").value = s.wake_bar;
+      $("wakeVal").textContent = s.wake_bar ? `${s.wake_bar}` : `auto (${s.wake_auto})`;
+    }
+    if ($("hearBtn")) $("hearBtn").textContent = s.hearing_test ? "🎤 Listening… say trick or treat" : "🎤 Hearing test";
+    if (s.mic_level !== undefined) {
+      // a log scale, so a whisper and a shout both fit: 10 .. 5000
+      const pos = (v) => Math.max(0, Math.min(100, (Math.log10(Math.max(v, 10)) - 1) / (Math.log10(5000) - 1) * 100));
+      $("meterFill").style.width = `${pos(s.mic_level)}%`;
+      const loud = s.mic_need && s.mic_level > s.mic_need;
+      $("meterFill").style.background = loud ? (s.voice_light ? "#4c4" : "#ca3") : "#468";
+      $("meterNeed").style.display = s.mic_need ? "block" : "none";
+      if (s.mic_need) $("meterNeed").style.left = `${pos(s.mic_need)}%`;
+      $("meterVal").textContent = s.mic_need ? `${s.mic_level} / ${s.mic_need}` : `${s.mic_level}`;
+      $("voiceDot").style.background = s.voice_light ? "#4c4" : "#333";
+    }
     if (s.mic_muted) line += " · MIC MUTED";
+    if (s.paused) line += " · PAUSED";
+    if (s.paused !== undefined && $("pauseBtn")) $("pauseBtn").textContent = s.paused ? "▶ Resume" : "⏸ Pause";
     if (s.fake) line += " · FAKE MODE";
+    if (s.version) line += ` · version ${s.version}`;
     stateEl.textContent = line;
   } catch { stateEl.textContent = state; }
-}, 500);
+}, 250);
 
 // ---- Render loop ----
 let lastFrame = performance.now();
@@ -90,8 +153,10 @@ function frame(now) {
   const dt = Math.min(0.1, (now - lastFrame) / 1000);
   lastFrame = now;
   if (now - lastFace > 2000) { face.awake = false; face.speaking = false; face.mouthLevel = null; }
-  face.update(now, dt);
-  face.draw(now);
+  if (!faceHidden) {
+    face.update(now, dt);
+    face.draw(now);
+  }
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
@@ -127,6 +192,7 @@ document.addEventListener("keydown", (e) => {
     case "escape": post("end"); break;
     case "f": post("flip"); break;
     case "m": post("mute"); break;
+    case "p": post("pause"); break;
     case "c": post("guide"); break;
     case "enter": document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen(); break;
   }
@@ -135,8 +201,13 @@ document.addEventListener("keydown", (e) => {
 // Phone-friendly buttons in the debug panel (tap D-panel buttons instead of keys).
 document.querySelectorAll("[data-cmd]").forEach((b) => b.addEventListener("click", () => {
   const cmd = b.dataset.cmd;
-  post(cmd);
+  post(cmd).then((r) => r.json()).then((j) => { if (j && j.error) log(j.error, "error"); }).catch(() => {});
 }));
+
+// Hearing threshold slider (0 = automatic); the hearing test sets it too.
+let wakeDragging = false;
+$("wake").addEventListener("input", (e) => { wakeDragging = true; $("wakeVal").textContent = e.target.value > 0 ? e.target.value : "auto"; });
+$("wake").addEventListener("change", (e) => { wakeDragging = false; post("wake_bar", { value: Number(e.target.value) }); });
 
 // Volume slider: sends the new level when you let go (the label follows while dragging).
 let volDragging = false;

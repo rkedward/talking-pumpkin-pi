@@ -11,8 +11,11 @@ const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 //  lidTilt: angled upper lids (sly)    lid: extra droop     smile: mouth corners up (+) / down (-)
 //  round: "O" mouth                    smirk: lopsided mouth  pupil: pupil size
 //  look: [x, y] gaze offset            tilt: head tilt (radians)  lean: head scale (leaning in)
+//  Silly ones: tongue: sticks out and waggles   cross: cross-eyed   wink: one eye shut
+//  spin: pupils whirl (dizzy)   wobble: head wobbles side to side   shake: shivers   pucker: small kissy lips
 const BASE = { brow: 0, browTilt: 0, browAsym: 0, eye: 1, cheek: 0, lidTilt: 0, lid: 0, smile: 0.35, round: 0,
-               smirk: 0, pupil: 1, lookX: 0, lookY: 0, tilt: 0, lean: 1 };
+               smirk: 0, pupil: 1, lookX: 0, lookY: 0, tilt: 0, lean: 1,
+               tongue: 0, cross: 0, wink: 0, spin: 0, wobble: 0, shake: 0, pucker: 0 };
 export const EXPRESSIONS = {
   neutral: {},
   happy: { brow: 0.3, cheek: 0.35, smile: 0.85 },
@@ -28,7 +31,21 @@ export const EXPRESSIONS = {
   proud: { brow: 0.45, cheek: 0.25, smile: 0.75, lid: 0.15, tilt: -0.07 },
   listening: { brow: 0.45, eye: 1.05, smile: 0.45, tilt: 0.1, lean: 1.03 },
   sleepy: { brow: -0.4, smile: 0.2 },
+  // Silly faces for playing around with the kids
+  silly: { brow: 0.5, browAsym: 0.9, cheek: 0.25, smile: 1, smirk: 0.8, round: 0.2, cross: 1, wobble: 0.8,
+           tilt: 0.08 },   // cross-eyed with a big crooked goofy grin, one brow way up
+  tongue: { brow: 0.45, smile: 0.55, tongue: 1, lid: 0.2, wobble: 0.35 },
+  crosseyed: { brow: 0.55, cross: 1, smile: 0.5, smirk: 0.4, tilt: 0.06 },
+  wink: { brow: 0.3, browAsym: -0.6, wink: 1, smile: 0.85, smirk: 0.6, cheek: 0.3 },
+  dizzy: { brow: 0.2, browTilt: 0.4, spin: 1, smile: 0.1, round: 0.4, wobble: 1 },
+  // The jump scare's monster face: huge, glaring, mouth gaping (see scare())
+  monster: { brow: -1, browTilt: -1.1, eye: 1.4, pupil: 0.3, lidTilt: 0.75, lid: 0.12, smile: 0.1, round: 0.35,
+             shake: 1.4, lean: 1.5 },
+  scared: { brow: 0.9, browTilt: 0.9, eye: 1.15, pupil: 0.55, smile: -0.4, round: 0.5, shake: 1, lean: 0.96 },
 };
+// Silly faces are a quick flash to get a reaction (FLASH_MS), then he goes back to a normal happy face.
+const SILLY = new Set(["silly", "tongue", "crosseyed", "wink", "dizzy", "scared"]);
+const FLASH_MS = 1500;
 EXPRESSIONS.quizzical = EXPRESSIONS.curious;
 
 export class PumpkinFace {
@@ -78,9 +95,21 @@ export class PumpkinFace {
   // Called on each word boundary from speech synthesis.
   kick() { this.mouthKick = 1; }
   surprise(ms = 900) { this.surpriseUntil = performance.now() + ms; }
+  // Jump scare: the face goes dark for darkMs, then a huge glaring red monster face lunges out for ms.
+  scare(darkMs = 700, ms = 1600) {
+    const now = performance.now();
+    this.scareDark = [now, now + darkMs];
+    this.scareUntil = now + darkMs + ms;
+  }
   laugh(ms = 1500) { this.laughUntil = performance.now() + ms; }
   setVisible(on) { this.visible = on; }
-  setMood(name) { this.mood = EXPRESSIONS[name] ? name : "neutral"; }
+  setMood(name) {
+    this.mood = EXPRESSIONS[name] ? name : "neutral";
+    if (SILLY.has(this.mood)) {
+      this.flash = { name: this.mood, until: performance.now() + FLASH_MS };
+      this.mood = "happy";
+    }
+  }
   setAccent(name, ms = 1500) { if (EXPRESSIONS[name]) this.accent = { name, until: performance.now() + ms }; }
   setState(state) {
     if (state !== this.state && (state === "speaking" || state === "listening")) this.nod = 1;   // a little nod
@@ -89,9 +118,11 @@ export class PumpkinFace {
 
   // Which expression to show right now.
   target(now) {
+    if (now < (this.scareUntil || 0) && now >= this.scareDark[1]) return "monster";
     if (!this.awake) return "sleepy";
     if (now < this.surpriseUntil) return "surprised";
     if (now < this.laughUntil) return "laughing";
+    if (this.flash && now < this.flash.until) return this.flash.name;
     if (this.state === "thinking") return "thinking";
     if (this.state === "listening" || this.state === "hearing") return "listening";
     if (this.accent && now < this.accent.until) return this.accent.name;
@@ -126,6 +157,11 @@ export class PumpkinFace {
     }
     // Expression: ease every "muscle" toward the target expression.
     const goal = { ...BASE, ...EXPRESSIONS[this.target(now)] };
+    const scaring = now < (this.scareUntil || 0);
+    const bam = scaring && now >= this.scareDark[1];
+    if (bam && !this.scareHit) { this.scareHit = true; Object.assign(this.ex, goal); }   // no easing: it jumps
+    if (!scaring) this.scareHit = false;
+    this.red = lerp(this.red || 0, bam ? 1 : 0, 1 - Math.exp(-dt * (bam ? 40 : 3)));
     const e = 1 - Math.exp(-dt * 7);
     for (const k in goal) this.ex[k] = lerp(this.ex[k], goal[k], e);
     // Thinking eyes drift up and aside; others glance only slightly away from the person.
@@ -151,7 +187,10 @@ export class PumpkinFace {
     if (laughing) lidTarget = 0;
     else if (now < this.blinkUntil) lidTarget = 1;
     this.squint = lerp(this.squint, laughing ? 1 : 0, 1 - Math.exp(-dt * 12));
-    this.vis = lerp(this.vis, this.visible ? 1 : 0, 1 - Math.exp(-dt * (this.visible ? 3 : 1.5)));
+    const calm = this.scareDark && now >= this.scareDark[0] && now < this.scareDark[1];
+    if (calm) this.vis = lerp(this.vis, 0, 1 - Math.exp(-dt * 12));          // lights out...
+    else if (scaring) this.vis = 1;                                           // ...BOO
+    else this.vis = lerp(this.vis, this.visible ? 1 : 0, 1 - Math.exp(-dt * (this.visible ? 3 : 1.5)));
     this.lid = lerp(this.lid, lidTarget, 1 - Math.exp(-dt * (now < this.blinkUntil ? 40 : 8)));
 
     // Mouth: follows the audio loudness sent by the brain; otherwise syllable-rate flapping while speaking.
@@ -163,6 +202,7 @@ export class PumpkinFace {
       mTarget = 0.15 + 0.65 * syll + 0.4 * this.mouthKick;
     }
     if (now < this.laughUntil) mTarget = Math.max(mTarget, 0.25);   // keep a big open grin while laughing
+    if (bam) mTarget = Math.max(mTarget, 0.9);                       // roaring
     this.mouthKick = Math.max(0, this.mouthKick - dt * 5);
     this.mouth = lerp(this.mouth, clamp(mTarget, 0, 1), 1 - Math.exp(-dt * 30));
     // Stressed, loud words make the brows pop up, like people do when they talk.
@@ -198,7 +238,9 @@ export class PumpkinFace {
     const sway = this.awake ? 0.018 * Math.sin(t * 0.7) + 0.008 * Math.sin(t * 1.9 + 1) : 0.01 * Math.sin(t * 0.4);
     const nodY = Math.sin(this.nod * Math.PI) * 22;
     ctx.translate(0, nodY - this.mouth * 10 + 4 * Math.sin(t * 1.3));
-    ctx.rotate(ex.tilt + sway);
+    const wobble = ex.wobble * 0.12 * Math.sin(t * 5.5);
+    if (ex.shake > 0.01) ctx.translate(ex.shake * 6 * Math.sin(t * 61), ex.shake * 3 * Math.sin(t * 47 + 1));
+    ctx.rotate(ex.tilt + sway + wobble);
     const breathe = 1 + 0.008 * Math.sin(t * 1.3);
     ctx.scale(ex.lean * breathe, ex.lean * breathe);
 
@@ -213,10 +255,10 @@ export class PumpkinFace {
 
   glow(x, y, r, brightness) {
     const grad = this.ctx.createRadialGradient(x, y, r * 0.05, x, y, r);
-    const a = clamp(brightness, 0, 1);
-    grad.addColorStop(0, `rgba(255, 250, 200, ${a})`);
-    grad.addColorStop(0.35, `rgba(255, 196, 40, ${a})`);
-    grad.addColorStop(1, `rgba(255, 96, 0, ${a})`);
+    const a = clamp(brightness, 0, 1), red = this.red || 0;   // red: the jump scare's glare
+    grad.addColorStop(0, `rgba(255, ${Math.round(250 - 120 * red)}, ${Math.round(200 - 170 * red)}, ${a})`);
+    grad.addColorStop(0.35, `rgba(255, ${Math.round(196 - 156 * red)}, ${Math.round(40 - 30 * red)}, ${a})`);
+    grad.addColorStop(1, `rgba(${Math.round(255 - 55 * red)}, ${Math.round(96 - 86 * red)}, 0, ${a})`);
     return grad;
   }
 
@@ -242,8 +284,10 @@ export class PumpkinFace {
     ctx.clip();
 
     // Pupil
-    const px = cx + this.gaze.x * 58 + side * 4;
-    const py = cy + 18 + this.gaze.y * 26;
+    const whirl = t => [Math.cos(t * 9 * side) * 40 * ex.spin, Math.sin(t * 9 * side) * 22 * ex.spin];
+    const [wx, wy] = ex.spin > 0.01 ? whirl(performance.now() / 1000) : [0, 0];
+    const px = cx + this.gaze.x * 58 * (1 - ex.cross) + side * (4 + 62 * ex.cross) + wx;   // toward the nose
+    const py = cy + 18 + this.gaze.y * 26 * (1 - ex.cross) + 8 * ex.cross + wy;
     ctx.fillStyle = "#000";
     ctx.beginPath();
     ctx.arc(px, py, 34 * ex.pupil, 0, TAU);
@@ -256,7 +300,8 @@ export class PumpkinFace {
 
     // Eyelid: black band sliding down from the top.
     const top = cy - 100, bottom = cy + 70;
-    const lid = clamp(this.lid + ex.lid * (1 - this.lid), 0, 1);
+    let lid = clamp(this.lid + ex.lid * (1 - this.lid), 0, 1);
+    if (side > 0) lid = lerp(lid, 0.93, ex.wink);   // wink: the face's right eye (screen left) shuts
     ctx.fillStyle = "#000";
     // Upper lid: a black band sliding down, angled (inner end lower) for a sly or spooky look.
     const lidY = top - 10 + (bottom - top + 10) * lid;
@@ -312,14 +357,19 @@ export class PumpkinFace {
 
   drawMouth(brightness) {
     const ctx = this.ctx, ex = this.ex;
-    const open = this.mouth;
-    const W = 290 * (1 - 0.5 * ex.round) * (1 - 0.15 * Math.abs(ex.smirk));
+    const pk = ex.pucker;
+    const open = this.mouth * (1 - 0.6 * pk);
+    const W = 290 * (1 - 0.5 * ex.round) * (1 - 0.15 * Math.abs(ex.smirk)) * (1 - 0.75 * pk);
     // Corners rise for a smile and drop for a frown; a smirk lifts one side.
     const lift = (ex.smile - 0.35) * 70;
     const yL = 110 - lift - ex.smirk * 35, yR = 110 - lift + ex.smirk * 25;
     const frown = Math.max(0, -ex.smile);     // a frown bends both lips upward into an arch
-    const upperC = 215 - open * 25 - ex.round * 60 - frown * 160;
-    const lowerC = Math.max(upperC + 20 + open * 150, 255 + open * 190 + ex.round * 90 - frown * 200);
+    let upperC = 215 - open * 25 - ex.round * 60 - frown * 160;
+    let lowerC = Math.max(upperC + 20 + open * 150, 255 + open * 190 + ex.round * 90 - frown * 200);
+    if (pk > 0.01) {                           // puckered: a small round "o" of lips
+      upperC = lerp(upperC, yL - 95, pk);
+      lowerC = lerp(lowerC, yL + 95 + open * 60, pk);
+    }
     const curveY = (x, c) => {                 // quadratic with control at x=0: x is linear in t
       const t = (x + W) / (2 * W);
       return (1 - t) ** 2 * yL + 2 * t * (1 - t) * c + t * t * yR;
@@ -338,8 +388,16 @@ export class PumpkinFace {
     ctx.shadowBlur = 0;
     ctx.clip();
 
-    // Teeth are uncarved pumpkin, so they're black blocks inside the glowing mouth.
-    ctx.fillStyle = "#000";
+    // Teeth are uncarved pumpkin, so they're black blocks inside the glowing mouth (none when puckered).
+    ctx.fillStyle = pk > 0.5 ? "rgba(0,0,0,0)" : "#000";
+    if (pk > 0.3) {                            // the line between puckered lips
+      ctx.save();
+      ctx.fillStyle = "#000";
+      ctx.beginPath();
+      ctx.ellipse(0, curveY(0, (upperC + lowerC) / 2), W * 0.75, 6 + 30 * open, 0, 0, TAU);
+      ctx.fill();
+      ctx.restore();
+    }
     const sx = W / 290;
     for (const [x0, x1] of [[-150 * sx, -95 * sx], [70 * sx, 125 * sx]]) {     // upper teeth hang down
       const y = Math.min(curveY(x0, upperC), curveY(x1, upperC));
@@ -349,6 +407,41 @@ export class PumpkinFace {
       const y = Math.max(curveY(x0, lowerC), curveY(x1, lowerC));
       ctx.fillRect(x0, y - 48, x1 - x0, 48 + 20);
     }
+    ctx.restore();
+    if (ex.tongue > 0.02) this.drawTongue(curveY(0, lowerC), brightness);
+  }
+
+  // A glowing tongue poking out under the bottom lip, waggling.
+  drawTongue(lipY, brightness) {
+    const ctx = this.ctx, ex = this.ex, k = ex.tongue;
+    const t = performance.now() / 1000;
+    const len = 40 + 150 * k, half = 72 * Math.min(1, k * 1.5);
+    ctx.save();
+    ctx.translate(ex.smirk * 40, lipY - 30);
+    ctx.rotate(0.22 * Math.sin(t * 6) * k);
+    ctx.beginPath();
+    ctx.moveTo(-half, 0);
+    ctx.lineTo(-half, len * 0.55);
+    ctx.quadraticCurveTo(-half, len + 18, 0, len + 18);
+    ctx.quadraticCurveTo(half, len + 18, half, len * 0.55);
+    ctx.lineTo(half, 0);
+    ctx.closePath();
+    ctx.shadowColor = "rgba(255, 90, 40, 0.9)";
+    ctx.shadowBlur = 40;
+    const grad = ctx.createRadialGradient(0, len * 0.6, 5, 0, len * 0.6, len);
+    const a = clamp(brightness, 0, 1);
+    grad.addColorStop(0, `rgba(255, 200, 170, ${a})`);
+    grad.addColorStop(1, `rgba(255, 80, 40, ${a})`);
+    ctx.fillStyle = grad;
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = "#000";          // the groove down the middle
+    ctx.lineWidth = 9;
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(0, 25);
+    ctx.lineTo(0, len * 0.7);
+    ctx.stroke();
     ctx.restore();
   }
 

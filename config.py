@@ -35,16 +35,34 @@ DEFAULTS = {
         "min_height": 0.25,           # ignore people smaller than this fraction of the frame (far away)
         "threads": 4,
         "fps": 12,
+        "visit_fps": 4,               # during a conversation: fewer detections, more CPU for speech (eyes still follow)
+        "nice": 10,                   # lower CPU priority for detection than for speech (0 = same, 19 = lowest)
     },
     "visit": {
         "arrive_s": 0.9,              # person must be in view this long before the greeting
         "gone_s": 3.5,                # nobody seen this long = visit over
-        "max_turns": 5,
-        "max_visit_s": 90,
-        "game_extra_turns": 4,        # a visit that plays the song game gets this many more turns ...
-        "game_extra_s": 60,           # ... and this much more time
+        "max_turns": 3,
+        "max_visit_s": 45,
+        "game_extra_turns": 2,        # a visit that plays the song game gets this many more turns ...
+        "game_extra_s": 30,           # ... and this much more time
         "listen_s": 8,                # how long to wait for each question
         "regreet_s": 12,
+        # What starts a visit: "sound" = someone says hello / trick or treat, knocks, rings the doorbell (or the
+        # remote's Greet); the camera only takes a picture for costumes and never tracks. "camera" = the old way:
+        # person detection starts the visit, the eyes follow people, and the visit ends when they walk away.
+        "trigger": "sound",
+        "wake_words": ["trick or treat", "hello", "knock", "doorbell", "door bell", "ding dong"],
+        "bye_words": ["goodbye", "good bye", "bye", "adios", "adiós"],   # a visitor saying one of these ends the visit
+        "wake_on": "words",           # any = anyone talking near him (the mic array's voice light + real words);
+                                      # words = only the wake_words above
+        "wake_stt": "cloud",          # cloud = the accurate speech-to-text (what's said near him before a visit goes
+                                      # to OpenAI too); local = whisper on the Pi (private, mishears more)
+        "use_array_vad": True,        # speech only counts while the mic array's own voice light is on
+        "knock": True,                # a knock on the door starts a visit too
+        "knock_ratio": 8.0,           # how far above the room's noise a knock must jump (higher = less sensitive)
+        "knocks": 2,                  # knocks within 1.5 s that count ("knock knock")
+        "cooldown_s": 0,              # sound mode: pause after a visit before listening for the next one
+        "quiet_end_s": 12,            # sound mode: this long with nobody talking = "are you still there?", then bye
     },
     "mic": {
         "device": "ReSpeaker",        # part of the input device name; falls back to the default mic
@@ -52,20 +70,39 @@ DEFAULTS = {
         "rate": 16000,
         "start_ratio": 3.0,           # speech = this many times louder than the background noise
         "min_rms": 250,
-        "silence_end_s": 0.8,
+        "silence_end_s": 0.6,         # pause that ends what they say: lower answers sooner, too low cuts them off
         "max_utterance_s": 8,
+        # Barge-in: keep listening while the pumpkin talks and stop when someone talks over him. "auto" turns
+        # it on when he plays through the mic array (its 3.5 mm jack or speaker connector), whose echo
+        # cancellation keeps him from hearing himself. true also tries it with a separate speaker (kids then
+        # have to talk louder than his echo); false = never.
+        "barge_in": "auto",
+        "barge_in_finish": "sentence",   # talked over: finish the sentence he's on ("sentence") or stop at once ("now")
+        "barge_min_s": 0.25,          # this much speech within barge_window_s counts as talking over him
+        "barge_window_s": 0.4,
+        "barge_ratio": 1.5,           # stricter than normal listening (start_ratio, min_rms) by this factor
+        "barge_echo_margin": 2.5,     # and this many times louder than the predicted echo of his voice
+        "barge_grace_s": 0.5,         # ignore the first moment of each reply
+        "barge_vad": "auto",          # also require the mic array's own speech detector (auto: with echo cancellation)
     },
     "stt": {
-        "engine": "whisper",          # whisper | none (type questions in the debug panel)
-        "model": "base.en",           # tiny.en is faster, small.en more accurate
+        "engine": "whisper",          # whisper (on the Pi) | openai (cloud, whisper as backup) | none (type in the debug panel)
+        "model": "base.en",           # whisper: tiny.en is faster, small.en more accurate
         "compute_type": "int8",
         "threads": 4,
+        "openai_model": "gpt-4o-transcribe",        # or gpt-4o-mini-transcribe (cheaper; on the Pi both took ~0.7-1 s)
+        "openai_timeout_s": 4.0,      # give up on the cloud and use whisper after this long
+        "pause_camera": True,         # stop person detection while it transcribes (the camera competes for the CPU)
     },
     "tts": {
         "engine": "piper",            # piper | openai | elevenlabs | espeak | none
-        "output_device": "",          # part of the output device name; empty = default
+        "output_device": "",          # part of the output device name; empty = default. "XVF3800" plays through
+                                      # the mic array's jack, which lets barge-in cancel the echo
         "sentence_pause": 0.35,       # seconds of silence after each sentence
         "question_pause": 1.0,        # seconds of silence after a question
+        "mouth_lead": 0.1,            # move the mouth this much early: the face page and projector lag a little
+        "stream_first": True,         # cloud voices: start playing the first sentence while it is still arriving
+        "mouth_delay": 0.0,           # seconds to hold the mouth back if it moves before the sound (the echo test measures it)
         "output_latency": 0.25,       # speaker buffer, seconds: raise (0.4) if speech is choppy, lower for tighter lip sync
         "piper_voice": "models/voices/en_US-ryan-medium.onnx",
         "piper_length_scale": 1.15,   # >1 is slower
@@ -89,6 +126,16 @@ DEFAULTS = {
         "offset_deg": 0,              # ReSpeaker angle that points straight out from the pumpkin
         "flip": False,
         "match_deg": 25,              # how close a voice direction must be to a detected person
+    },
+    "idle": {
+        # A video shown while he waits for visitors (e.g. AtmosFX singing pumpkins); the live face takes over
+        # when a visit starts and the video comes back after it. Path relative to the pumpkin folder, or a list
+        # of paths to play in turn.
+        "video": "",
+        "sound": True,                # play its soundtrack through his speaker (needs ffmpeg; with the mic
+                                      # array's echo cancellation he still hears "trick or treat" over it)
+        "volume": 0.8,                # soundtrack loudness relative to his voice
+        "fade_s": 1.0,                # crossfade between the video and the face
     },
     "face": {
         "gaze_flip": False,

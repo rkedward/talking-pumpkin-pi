@@ -86,6 +86,47 @@ Try it with family before Halloween night. With no API key (fake mode) it uses c
 for checking the camera, eyes, voice and mic; add the key for real costume jokes. Once the core pumpkin
 works on its own, add whichever add-ons you want below.
 
+### 1e. Let kids interrupt him (barge-in)
+
+Like ChatGPT's voice mode, the pumpkin can keep listening while he talks and stop the moment someone talks
+over him; he then hears out what they said and answers that. Shouting the answer during the song game
+stops the song too.
+
+The trick is not hearing himself. The XVF3800 mic array cancels the echo of whatever it plays *itself*, so
+the speaker has to be plugged into the mic array rather than into the Pi:
+
+1. Plug a powered speaker into the mic array's 3.5 mm jack (or a small passive 4-8 ohm speaker into its JST
+   speaker connector). The USB-only speaker (item 9) can't be used for this.
+2. In `config.toml` set `output_device = "XVF3800"` under `[tts]`. If it is quiet, run `alsamixer`, pick the
+   XVF3800, raise PCM to 100% and `sudo alsactl store`.
+3. Restart. The log says `barge-in on ... (mic array cancels his voice)`.
+
+The echo canceller needs a few seconds of his voice to settle after starting up. `[mic] barge_in = true`
+tries barge-in with a separate speaker as well, but then kids have to be clearly louder than his voice;
+`false` turns it off. If he stops for noises that aren't speech, raise `barge_ratio` (1.5) or `barge_min_s`
+(0.25); if kids have to shout, lower them.
+
+### 1f. How a visit starts and ends
+
+By default he listens instead of watching (`[visit] trigger = "sound"`):
+
+- **A visit starts** when someone says "hello", "trick or treat", "knock" or "doorbell", knocks twice, rings the
+  doorbell (see the add-on) or you press Greet; other talking nearby doesn't wake him (`[visit] wake_words`, or
+  `wake_on = "any"` to wake for anyone talking). Tune knocks with `knock_ratio` (higher = less sensitive).
+- **Not hearing you?** In the control page (`?debug`) press **🎤 Hearing test** and say "trick or treat" 2 or 3
+  times from where kids will stand, with the song playing. It measures your voice against the music and room noise
+  and suggests a **Threshold** (set it with the slider; lower = easier to wake, all the way left = automatic). The log shows what it
+  measured.
+- **A visit ends** right away when a visitor says "bye", "goodbye" or "adios" (`[visit] bye_words`).
+- **The camera only looks when he wants to see**: one picture when they arrive, for costumes. If nobody is in view
+  he asks them to step in front of him and takes another look. It never tracks people, so the Pi stays nearly idle.
+- **His eyes** follow whoever is talking, from the mic array's direction.
+- **A visit ends** after `quiet_end_s` (12 s) of nobody talking (he asks "are you still there?" first), when they
+  say bye, or at `max_turns` / `max_visit_s`.
+
+`trigger = "camera"` brings back the old way: person detection starts the visit, the eyes follow people, and the
+visit ends when they walk away.
+
 ## Add-ons
 
 ### Add-on: Window side show
@@ -213,6 +254,45 @@ automation:
           entity_id: light.porch
 ```
 
+### Add-on: AI assistant remote control (MCP)
+
+Let an AI assistant drive the pumpkin: "make the pumpkin say 'Nice Spider-Man costume!' with his tongue out",
+"play the song game", "end the visit", "what did the kids ask him tonight?", "is he OK?". `mcp_server.py` is
+an [MCP](https://modelcontextprotocol.io) server with tools to say something (with a face), set his face,
+greet, end a visit, pass him a question, play a song, change the volume, mute the mic, check his status, read
+the conversation and log, see the camera, run the echo test, send the ghost on a tour, and set off a jump
+scare (lights out, then a red monster face lunges out with a roar; he giggles "Gotcha!" after). Only you
+can trigger the scare, optionally a few seconds later (`delay_s`); he never does it on his own. He still chats with
+visitors on his own; this is for stepping in. Whatever he says mid-visit, his next reply knows about.
+
+On the Pi, with the pumpkin running, add it to Claude Code:
+
+```bash
+cd ~/pumpkin && .venv/bin/pip install "mcp>=2.3"
+claude mcp add pumpkin -- ~/pumpkin/.venv/bin/python ~/pumpkin/mcp_server.py
+```
+
+From Claude Desktop on a laptop, start it over SSH (in its MCP settings):
+`"pumpkin": {"command": "ssh", "args": ["you@pumpkin.local", "~/pumpkin/.venv/bin/python", "~/pumpkin/mcp_server.py"]}`
+
+It talks over stdio and opens nothing new to the network. The puppet commands on the web API (`/api/say`,
+`/api/set_mood`, `/api/play_song`, `/api/recent`) only answer the Pi itself, or a request carrying the
+`X-Pumpkin-Key` header that matches `PUMPKIN_KEY` in `.env`. Don't expose the web port to the internet.
+
+### Add-on: Singing pumpkins while he waits (idle video)
+
+Show a video, such as AtmosFX's singing pumpkins, while nobody is visiting. When a visit starts it fades into the
+live face, and it comes back after the goodbye. Copy the video to the Pi (e.g. `static/atmos/`) and set:
+
+```toml
+[idle]
+video = "static/atmos/your-video.mp4"
+# sound = true                 # soundtrack through his speaker; the mic array cancels it so he still hears "trick or treat"
+# volume = 0.8
+```
+
+The soundtrack is decoded once with ffmpeg. The picture plays muted in the face page, lined up with the sound.
+
 ### Add-on: Fog and lights
 
 A puff of fog and a flash of lights when kids arrive. Use a plug-in power relay for lights (no mains
@@ -245,8 +325,10 @@ The most useful ones:
 | `[claude] model` | `claude-opus-5-5` | `claude-haiku-5-5` replies faster. |
 | `[camera] hfov_deg` | 66 | Camera's horizontal field of view (Camera Module 3 Wide: 102). Used to match voices to people. |
 | `[detector] min_height` | 0.25 | Smallest person (fraction of frame height) that counts as a visitor. |
-| `[visit] max_turns`, `max_visit_s` | 5, 90 | Wrap up so the line keeps moving. |
+| `[visit] max_turns`, `max_visit_s` | 3, 45 | Wrap up so the line keeps moving. |
+| `[visit] trigger` | `sound` | `sound`: words, a knock, the doorbell or Greet start a visit; `camera`: person detection does. |
 | `[stt] model` | `base.en` | `tiny.en` is faster, `small.en` more accurate (slower on the Pi). |
+| `[stt] engine` | `whisper` | `openai` sends speech to OpenAI (needs `OPENAI_API_KEY`): about 0.5 s faster and much better with kids' voices, at well under a cent a visit. Whisper on the Pi takes over if the internet drops. Visitors' voices leave the porch, so a small sign is a nice touch. |
 | `[tts] engine` | `piper` | `openai` or `elevenlabs` for natural cloud voices, `espeak` for a robotic fallback. |
 | `[tts] piper_voice` | `en_US-ryan-medium` | Any voice from the Piper voice list; rerun `install_pi.sh` to download it. Try `en_GB-alan-medium` or `en_US-joe-medium`. |
 | `[tts] pitch_semitones` | -2 | Deeper (negative) or squeakier (positive) voice. |
@@ -319,6 +401,7 @@ Open http://localhost:8000 (add `?debug` for the panel). On Linux install `libpo
 | `brain.py` | Claude prompts: costume greeting and Q&A. |
 | `home.py` | Home automation: doorbell in, webhooks out. |
 | `web.py` | Serves the face page, live state, camera view and remote-control commands. |
+| `mcp_server.py` | Remote control for AI assistants (MCP): say, faces, songs, greet, status, conversation, camera. |
 | `align.py`, `static/warp.js` | Auto-alignment from a phone photo: pattern, marker detection, keystone fit. |
 | `static/` | The projected face (`face.js`) and debug panel (`app.js`). |
 | `install_pi.sh`, `kiosk.sh` | Pi installer and full-screen browser launcher. |
