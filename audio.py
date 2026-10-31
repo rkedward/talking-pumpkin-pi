@@ -53,6 +53,7 @@ class Microphone:
         self.heard_level = 0.0        # loudness of the pumpkin's voice coming out of the speaker right now
         self.recording = None         # a list while the echo test records
         self.levels = collections.deque(maxlen=40)   # (time, loudness) of recent frames, for the level meter
+        self.raw = collections.deque(maxlen=400)     # (time, every channel) of the last ~12 s, for wakeclips/
         self.name = ""
         self.ok = False
         if not sd:
@@ -82,6 +83,7 @@ class Microphone:
     def _callback(self, indata, frames, t, status):
         if self.recording is not None:          # echo test: every channel, never muted
             self.recording.append((time.time(), indata.copy()))
+        self.raw.append((time.time(), indata.copy()))
         frame = indata[:, self.channel]
         self.levels.append((time.time(), float(np.sqrt(np.mean(frame.astype(np.float32) ** 2)))))
         if self.user_muted or time.time() < self.muted_until:
@@ -422,7 +424,17 @@ class Listener:
                 w.setsampwidth(2)
                 w.setframerate(self.mic.rate)
                 w.writeframes((np.clip(audio, -1, 1) * 32767).astype(np.int16).tobytes())
-            for old in sorted(folder.glob("*.wav"))[:-keep]:
+            # and every mic channel over the same moment (to compare which one recognises voices best)
+            cut = time.time() - len(audio) / self.mic.rate - 1.0
+            raw = [d for t, d in list(self.mic.raw) if t >= cut]
+            if raw:
+                allch = np.concatenate(raw)
+                with wave.open(str(name.with_suffix(".all.wav")), "wb") as w:
+                    w.setnchannels(allch.shape[1])
+                    w.setsampwidth(2)
+                    w.setframerate(self.mic.rate)
+                    w.writeframes(allch.astype(np.int16).tobytes())
+            for old in sorted(folder.glob("*.wav"))[:-keep * 2]:
                 old.unlink()
         except Exception:
             pass
