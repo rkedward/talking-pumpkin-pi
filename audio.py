@@ -280,7 +280,7 @@ class Listener:
         frame_s = Microphone.FRAME_S
         margin = float(self.cfg["barge_echo_margin"])
         self.mic.flush()
-        pre_roll, voiced, chunks, silent, speech = [], [], [], 0, False
+        pre_roll, voiced, chunks, silent, speech, lit = [], [], [], 0, False, 0
         burst, hits, clock = 0, [], 0.0   # knock: how long the current loud burst is; times of short bursts
         prev, refs, loudest, report, peak = self.noise, [], 0.0, 10.0, 0.0
         flagged, flag_max = 0, 0.0        # frames the mic array called voice, and the loudest of them (log)
@@ -371,20 +371,30 @@ class Listener:
                 pre_roll = (pre_roll + [frame])[-10:]
                 voiced = (voiced + [loud])[-8:]
                 if sum(voiced) >= 4:   # loud for half of a quarter second: knocks, clatter and typing aren't words
-                    speech, silent, chunks = True, 0, list(pre_roll)
+                    speech, silent, chunks, lit = True, 0, list(pre_roll), 0
             else:
                 chunks.append(frame)
+                lit += 1 if (voice and voice()) else 0   # frames of this burst with the voice light on
                 # once someone's talking, keep going on level alone: the voice light flickers between words
                 # (a lower bar than starting: over loud music the quiet ends of words fall under it and the
                 # clip got cut to "Up." before "trick or treat" was over)
-                silent = 0 if (rms > basic * 0.6 or (voice and voice()) if voice else loud) else silent + 1
-                if len(chunks) * frame_s > 6:     # a long conversation going past, not a greeting
-                    speech, pre_roll, voiced = False, [], []
-                    continue
-                if silent * frame_s >= max(0.8, float(self.cfg["silence_end_s"])):
+                # (but above the room and music level, or the burst never ends while the song plays)
+                keep_on = rms > max(basic * 0.6, self.noise * 1.2) if voice else loud
+                silent = 0 if keep_on else silent + 1
+                capped = len(chunks) * frame_s > 5   # still going: hear what we've got rather than drop it
+                if capped and self.log:
+                    self.log("(sound went on for 5 s; checking it anyway)", "info")
+                if capped or silent * frame_s >= max(0.8, float(self.cfg["silence_end_s"])):
                     audio = np.concatenate(chunks).astype(np.float32) / 32768.0
                     speech, pre_roll, voiced = False, [], []
                     voice_ms = speech_ms(audio, self.mic.rate)
+                    if voice_ms is not None and voice_ms < 250 and lit * frame_s >= 0.5:
+                        # the voice light says someone talked, but the echo-cancelled channel garbled it past
+                        # recognising over the music: ask the speech-recognition channel instead
+                        other = self._other_channel(len(audio) / self.mic.rate)
+                        other_ms = speech_ms(other, self.mic.rate) if other is not None else None
+                        if other_ms is not None and other_ms >= 400:
+                            voice_ms = other_ms
                     if voice_ms is not None and voice_ms < 250:   # typing, clicks, bumps: not a person talking
                         if self.log:
                             self.log(f"(not speech: {voice_ms:.0f} ms of voice in {len(audio) / self.mic.rate:.1f} s of sound)",
