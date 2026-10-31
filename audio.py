@@ -359,11 +359,13 @@ class Listener:
             else:
                 chunks.append(frame)
                 # once someone's talking, keep going on level alone: the voice light flickers between words
-                silent = 0 if (rms > basic if voice else loud) else silent + 1
+                # (a lower bar than starting: over loud music the quiet ends of words fall under it and the
+                # clip got cut to "Up." before "trick or treat" was over)
+                silent = 0 if (rms > basic * 0.6 or (voice and voice()) if voice else loud) else silent + 1
                 if len(chunks) * frame_s > 6:     # a long conversation going past, not a greeting
                     speech, pre_roll, voiced = False, [], []
                     continue
-                if silent * frame_s >= float(self.cfg["silence_end_s"]):
+                if silent * frame_s >= max(0.8, float(self.cfg["silence_end_s"])):
                     audio = np.concatenate(chunks).astype(np.float32) / 32768.0
                     speech, pre_roll, voiced = False, [], []
                     voice_ms = speech_ms(audio, self.mic.rate)
@@ -372,6 +374,7 @@ class Listener:
                             self.log(f"(not speech: {voice_ms:.0f} ms of voice in {len(audio) / self.mic.rate:.1f} s of sound)",
                                      "info")
                         continue
+                    self._keep_clip(audio)
                     try:
                         text = stt.transcribe(audio, self.mic.rate)
                     except Exception:
@@ -391,6 +394,24 @@ class Listener:
                     if text and is_wake(text):
                         return ("words", text)
         return None
+
+    def _keep_clip(self, audio, keep=12):
+        """The last few sounds he tried to understand between visits, as wav files in wakeclips/ (to check
+        by ear what he heard, e.g. if "trick or treat" is cut short)."""
+        try:
+            import wave
+            folder = resolve("wakeclips")
+            folder.mkdir(exist_ok=True)
+            name = folder / time.strftime("%H%M%S.wav")
+            with wave.open(str(name), "wb") as w:
+                w.setnchannels(1)
+                w.setsampwidth(2)
+                w.setframerate(self.mic.rate)
+                w.writeframes((np.clip(audio, -1, 1) * 32767).astype(np.int16).tobytes())
+            for old in sorted(folder.glob("*.wav"))[:-keep]:
+                old.unlink()
+        except Exception:
+            pass
 
     # ---- one utterance ------------------------------------------------------------------------------
     def listen(self, timeout_s, typed, should_stop, on_speech=None):
