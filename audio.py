@@ -107,6 +107,12 @@ _VAD = None
 def speech_ms(audio, rate=16000):
     """How much of this sound is a human voice, in ms, by Silero VAD (it comes with faster-whisper): typing,
     clicks, bumps and clatter score 0. None if the detector isn't available."""
+    spans = speech_spans(audio, rate)
+    return None if spans is None else sum(b - a for a, b in spans) * 1000
+
+
+def speech_spans(audio, rate=16000):
+    """Where the voice is, as (start s, end s) pairs, by Silero VAD. None if the detector isn't available."""
     global _VAD
     if _VAD is None:
         try:
@@ -123,7 +129,7 @@ def speech_ms(audio, rate=16000):
         spans = _VAD[0](np.asarray(audio, np.float32), _VAD[1])
     except Exception:
         return None
-    return sum(sp["end"] - sp["start"] for sp in spans) / 16
+    return [(sp["start"] / 16000, sp["end"] / 16000) for sp in spans]
 
 
 def _thump(frame, rate=16000):
@@ -148,6 +154,9 @@ class Listener:
         self.timing = {}
         self.on_busy = None            # called with True/False around speech recognition (pauses the camera)
         self.log = None                # optional: for a line every 10 s about hearing over the idle music
+        self.wake_bar = None           # hearing threshold for waking (mic level); None = automatic (room noise x 1.8, >= 50)
+        self.wake_flag = True          # also need the mic array's voice light (off if the test finds it misses voices)
+        self.test = None               # the hearing test: {"until", "frames", "flags", "done"} while it records
 
     # ---- barge-in: someone talks over the pumpkin -------------------------------------------------
     def start_watch(self):
@@ -278,6 +287,15 @@ class Listener:
                 frame = self.mic.frames.get(timeout=0.1)
             except queue.Empty:
                 continue
+            test = self.test
+            if test:                       # the hearing test: just record (nothing wakes him meanwhile)
+                test["frames"].append(frame)
+                test["flags"].append(bool(voice()) if voice else True)
+                if time.time() >= test["until"]:
+                    self.test = None
+                    threading.Thread(target=test["done"], args=(test["frames"], test["flags"]), daemon=True).start()
+                    pre_roll, voiced, chunks, speech = [], [], [], False
+                continue
             rms = float(np.sqrt(np.mean(frame.astype(np.float32) ** 2)))
             clock += frame_s               # audio time (frames can arrive in bursts)
             now = clock
@@ -294,7 +312,8 @@ class Listener:
                 loudest = max(loudest, rms)
                 if clock >= report and self.log:
                     report = clock + 10
-                    need = (max(self.noise * 1.8, 50.0) if voice else
+                    need = ((max(self.noise * 1.3, self.wake_bar) if self.wake_bar else max(self.noise * 1.8, 50.0))
+                            if voice else
                             max(self.noise * float(self.cfg['start_ratio']), float(self.cfg['min_rms']), echo * margin))
                     self.log(f"(over the music: room noise {self.noise:.0f}, music echo {echo:.0f}, loudest {loudest:.0f}; "
                              f"speech needs {need:.0f}; voice light on {flagged * frame_s:.1f} s, loudest then "
@@ -325,8 +344,8 @@ class Listener:
                 # The mic array says someone's talking: a low bar (its echo-cancelled channel turns voices down
                 # a lot while it plays music), and Silero VAD below throws out typing and clicks.
                 flag = voice()
-                basic = max(self.noise * 1.8, 50.0)
-                loud = rms > basic and flag
+                basic = max(self.noise * 1.3, self.wake_bar) if self.wake_bar else max(self.noise * 1.8, 50.0)
+                loud = rms > basic and (flag or not self.wake_flag)
                 if flag:
                     flagged, flag_max = flagged + 1, max(flag_max, rms)
             else:
@@ -334,8 +353,8 @@ class Listener:
                 loud = rms > max(basic, echo * margin)
             if not speech:
                 pre_roll = (pre_roll + [frame])[-10:]
-                voiced = voiced + [frame] if loud else []
-                if len(voiced) >= 5:   # knocks, clatter and typing aren't words
+                voiced = (voiced + [loud])[-8:]
+                if sum(voiced) >= 5:   # mostly loud for ~a quarter second: knocks, clatter and typing aren't words
                     speech, silent, chunks = True, 0, list(pre_roll)
             else:
                 chunks.append(frame)

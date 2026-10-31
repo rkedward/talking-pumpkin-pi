@@ -177,6 +177,8 @@ class Pumpkin:
         self.barge_in = self._barge_in_setup(cfg["mic"])
         self._echo_lock = threading.Lock()
         Speaker.volume = float(saved.get("volume", 1.0))
+        self.listener.wake_bar = saved.get("wake_bar") or None      # from the hearing test or the slider
+        self.listener.wake_flag = bool(saved.get("wake_flag", True))
         self.show = None
         if cfg["window"]["enabled"]:
             self.show = SideShow(cfg["window"], cfg["tts"], self.mic, self.hub, self.log)
@@ -764,6 +766,60 @@ class Pumpkin:
                 n += 1
         self._idle_next = n + 1
 
+    HEARING_TEST_S = 8
+
+    def hearing_test(self):
+        """Record 8 s between visits while someone says "trick or treat" a few times, then set the hearing
+        threshold between the loudest non-voice sound (music echo, room) and their voice."""
+        if self.visit_active or not self.sound:
+            return {"error": "the hearing test runs between visits (sound mode): end the visit first"}
+        if self.listener.test:
+            return {"error": "already testing"}
+        self.log(f"🎤 Hearing test: say \"trick or treat\" 2 or 3 times now, as loud as a kid would "
+                 f"({self.HEARING_TEST_S} s)")
+        self.listener.test = {"until": time.time() + self.HEARING_TEST_S, "frames": [], "flags": [],
+                              "done": self._hearing_result}
+        return {"ok": True, "seconds": self.HEARING_TEST_S}
+
+    def _hearing_result(self, frames, flags):
+        from audio import speech_spans
+        if not frames:
+            self.log("🎤 Hearing test: no sound came in from the mic")
+            return
+        fs, rate = Microphone.FRAME_S, self.mic.rate
+        audio = np.concatenate(frames).astype(np.float32) / 32768.0
+        spans = speech_spans(audio, rate) or []
+        rms = np.array([float(np.sqrt(np.mean(f.astype(np.float32) ** 2))) for f in frames])
+        is_voice = np.zeros(len(frames), bool)
+        for a, b in spans:
+            is_voice[int(a / fs):int(b / fs) + 1] = True
+        is_voice = is_voice[:len(frames)]
+        if is_voice.sum() < int(0.3 / fs):
+            self.log(f"🎤 Hearing test: I didn't hear a voice (loudest sound {rms.max():.0f}). Is the mic muted, "
+                     "or were you too far away? Nothing changed.")
+            return
+        voice_lvl = float(np.percentile(rms[is_voice], 40))            # most of the words are louder than this
+        other = rms[~is_voice]
+        noise_lvl = float(np.percentile(other, 95)) if len(other) else float(self.listener.noise)
+        flag_on = float(np.mean(np.array(flags)[is_voice]))
+        try:
+            heard = self.listener.stt.transcribe(audio, rate) if self.listener.stt else ""
+        except Exception:
+            heard = ""
+        # between the two, leaning low (easy to wake: Silero and the wake words throw out the rest)
+        bar = max(20.0, noise_lvl * 1.2, min(voice_lvl * 0.5, (voice_lvl * noise_lvl) ** 0.5))
+        bar = min(bar, voice_lvl * 0.8)                                  # never above their own voice
+        old = self.listener.wake_bar or max(self.listener.noise * 1.8, 50.0)
+        self.listener.wake_bar = bar
+        self.listener.wake_flag = flag_on >= 0.5
+        self._save()
+        self.log(f"🎤 Hearing test: your voice {voice_lvl:.0f}, other sounds up to {noise_lvl:.0f}, "
+                 f"mic array's voice light on {flag_on:.0%} of the time; heard {heard!r}. "
+                 f"Threshold {old:.0f} → {bar:.0f}"
+                 + ("" if self.listener.wake_flag else " (and not waiting for the voice light, which missed you)")
+                 + (". Your voice was barely above the other sounds: move closer or turn the music down."
+                    if voice_lvl < noise_lvl * 1.3 else "."))
+
     def set_paused(self, on):
         """The Pause button: his voice, the songs and the video freeze where they are, nothing wakes him and
         no visit timer runs; Resume picks it all up from the same spot."""
@@ -1128,6 +1184,18 @@ class Pumpkin:
                 return {"error": "percent must be a number"}
             self._save()
             self.log(f"volume {round(Speaker.volume * 100)}%")
+        elif name == "hearing_test":
+            return self.hearing_test()
+        elif name == "wake_bar":
+            try:
+                bar = float(data.get("value", 0))
+            except (TypeError, ValueError):
+                return {"error": "value must be a number"}
+            self.listener.wake_bar = min(2000.0, bar) if bar > 0 else None
+            if not bar:
+                self.listener.wake_flag = True
+            self._save()
+            self.log(f"🎤 hearing threshold {round(bar) if bar > 0 else 'automatic'}")
         elif name == "pause":
             self.set_paused(not Speaker.paused)
         elif name == "mute":
@@ -1351,7 +1419,8 @@ class Pumpkin:
     def _save(self):
         STATE_FILE.write_text(json.dumps({"gaze_flip": self.gaze_flip, "calib": self.calib, "face_warp": self.face_warp,
                                           "window_calib": self.window_calib,
-                                          "volume": Speaker.volume}))
+                                          "volume": Speaker.volume, "wake_bar": self.listener.wake_bar,
+                                          "wake_flag": self.listener.wake_flag}))
 
     def status(self):
         if not hasattr(self, "listener"):   # the debug panel can ask while the camera and mic are still starting
@@ -1361,6 +1430,9 @@ class Pumpkin:
               "fake": self.cfg["claude"]["fake"], "model": self.cfg["claude"]["model"],
               "mic_muted": self.mic.user_muted,
               "paused": Speaker.paused,
+              "wake_bar": round(self.listener.wake_bar) if self.listener.wake_bar else 0,
+              "wake_auto": round(max(self.listener.noise * 1.8, 50.0)),
+              "hearing_test": bool(self.listener.test),
               "volume": round(Speaker.volume * 100),
               "creature": (self.show.on_stage or {}).get("name") if self.show else None,
               "creature_window": self.show.screen if self.show else None,

@@ -57,6 +57,12 @@
     <input id="vol" type="range" min="0" max="150" step="5" value="100">
     <span id="volVal">100%</span>
   </div>
+  <div class="row" title="How loud a voice must be to wake him. Hearing test: press it, then say &quot;trick or treat&quot; 2-3 times from where kids stand; it sets this for you. Lower = easier to wake. All the way left = automatic.">
+    <button data-cmd="hearing_test" id="hearBtn">🎤 Hearing test</button>
+    <label for="wake">Threshold</label>
+    <input id="wake" type="range" min="0" max="600" step="5" value="0">
+    <span id="wakeVal">auto</span>
+  </div>
   <div class="row" title="Line the face up with the pumpkin">
     <button data-key="ArrowLeft">←</button><button data-key="ArrowRight">→</button>
     <button data-key="ArrowUp">↑</button><button data-key="ArrowDown">↓</button>

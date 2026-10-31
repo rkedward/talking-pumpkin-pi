@@ -122,6 +122,11 @@ setInterval(async () => {
       fillWindows(s.windows, s.windows_on);
     }
     if (s.volume !== undefined && !volDragging) { $("vol").value = s.volume; $("volVal").textContent = `${s.volume}%`; }
+    if (s.wake_bar !== undefined && !wakeDragging) {
+      $("wake").value = s.wake_bar;
+      $("wakeVal").textContent = s.wake_bar ? `${s.wake_bar}` : `auto (${s.wake_auto})`;
+    }
+    if ($("hearBtn")) $("hearBtn").textContent = s.hearing_test ? "🎤 Listening… say trick or treat" : "🎤 Hearing test";
     if (s.mic_muted) line += " · MIC MUTED";
     if (s.paused) line += " · PAUSED";
     if (s.paused !== undefined && $("pauseBtn")) $("pauseBtn").textContent = s.paused ? "▶ Resume" : "⏸ Pause";
@@ -184,8 +189,13 @@ document.addEventListener("keydown", (e) => {
 // Phone-friendly buttons in the debug panel (tap D-panel buttons instead of keys).
 document.querySelectorAll("[data-cmd]").forEach((b) => b.addEventListener("click", () => {
   const cmd = b.dataset.cmd;
-  post(cmd);
+  post(cmd).then((r) => r.json()).then((j) => { if (j && j.error) log(j.error, "error"); }).catch(() => {});
 }));
+
+// Hearing threshold slider (0 = automatic); the hearing test sets it too.
+let wakeDragging = false;
+$("wake").addEventListener("input", (e) => { wakeDragging = true; $("wakeVal").textContent = e.target.value > 0 ? e.target.value : "auto"; });
+$("wake").addEventListener("change", (e) => { wakeDragging = false; post("wake_bar", { value: Number(e.target.value) }); });
 
 // Volume slider: sends the new level when you let go (the label follows while dragging).
 let volDragging = false;

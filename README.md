@@ -113,6 +113,10 @@ By default he listens instead of watching (`[visit] trigger = "sound"`):
 - **A visit starts** when someone says "hello", "trick or treat", "knock" or "doorbell", knocks twice, rings the
   doorbell (see the add-on) or you press Greet; other talking nearby doesn't wake him (`[visit] wake_words`, or
   `wake_on = "any"` to wake for anyone talking). Tune knocks with `knock_ratio` (higher = less sensitive).
+- **Not hearing you?** In the control page (`?debug`) press **🎤 Hearing test** and say "trick or treat" 2 or 3
+  times from where kids will stand, with the song playing. It measures your voice against the music and room noise
+  and sets the **Threshold** slider (lower = easier to wake; all the way left = automatic). The log shows what it
+  measured.
 - **A visit ends** right away when a visitor says "bye", "goodbye" or "adios" (`[visit] bye_words`).
 - **The camera only looks when he wants to see**: one picture when they arrive, for costumes. If nobody is in view
   he asks them to step in front of him and takes another look. It never tracks people, so the Pi stays nearly idle.
