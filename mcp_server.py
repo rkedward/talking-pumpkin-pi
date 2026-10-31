@@ -119,6 +119,14 @@ def set_volume(percent: int) -> dict:
 
 
 @server.tool()
+def pause() -> dict:
+    """Pause everything (his voice mid-word, the songs, the idle video, listening, visit timers), or resume
+    from the same spot if he's already paused."""
+    _call("/api/pause", {})
+    return {"paused": _call("/api/status").get("paused")}
+
+
+@server.tool()
 def toggle_mic() -> dict:
     """Mute his hearing, or unmute it if it's muted."""
     _call("/api/mute", {})

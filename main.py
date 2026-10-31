@@ -486,6 +486,7 @@ class Pumpkin:
             self.sideshow(result)
 
         started, turns = time.time(), 0
+        self._pause_debt = 0.0
         brain_thread = None
         max_turns, max_s, game_on = int(v["max_turns"]), float(v["max_visit_s"]), False
         pending_look, looks, nudged = self.sound and result.get("look"), 0, False
@@ -504,6 +505,7 @@ class Pumpkin:
             elif not forced and not self.present():
                 self.say(random.choice(GOODBYES))
                 break
+            started, self._pause_debt = started + self._pause_debt, 0.0   # time spent paused doesn't count
             if turns >= max_turns or time.time() - started > max_s:
                 self.say(random.choice(WRAPUPS))
                 break
@@ -761,6 +763,28 @@ class Pumpkin:
             if self._idle_on:          # finished: the next song (after a visit, the next one too)
                 n += 1
         self._idle_next = n + 1
+
+    def set_paused(self, on):
+        """The Pause button: his voice, the songs and the video freeze where they are, nothing wakes him and
+        no visit timer runs; Resume picks it all up from the same spot."""
+        if on == Speaker.paused:
+            return
+        if on:
+            self._paused_at = time.time()
+            Speaker.paused = True
+            self.hub.publish({"t": "pause", "on": True})
+            self.log("⏸ paused")
+            return
+        held = time.time() - getattr(self, "_paused_at", time.time())
+        self._pause_debt = getattr(self, "_pause_debt", 0.0) + held
+        self.last_activity += held
+        if self._idle_playing and self._idle_clip:   # the song picks up where it was: so does the picture
+            self._idle_started += held
+            self.hub.publish({"t": "idle", "on": True, "fade": 0, "start": self._idle_started,
+                              "clip": self._idle_clips.index(self._idle_clip)})
+        Speaker.paused = False
+        self.hub.publish({"t": "pause", "on": False})
+        self.log(f"▶ resumed after {held:.0f} s")
 
     @contextlib.contextmanager
     def idle_paused(self):
@@ -1104,6 +1128,8 @@ class Pumpkin:
                 return {"error": "percent must be a number"}
             self._save()
             self.log(f"volume {round(Speaker.volume * 100)}%")
+        elif name == "pause":
+            self.set_paused(not Speaker.paused)
         elif name == "mute":
             self.mic.user_muted = not self.mic.user_muted
             self.log(f"mic {'muted' if self.mic.user_muted else 'on'}")
@@ -1334,6 +1360,7 @@ class Pumpkin:
         st = {"state": self.state, "people": len(people), "detect_ms": round(self.vision.detect_ms),
               "fake": self.cfg["claude"]["fake"], "model": self.cfg["claude"]["model"],
               "mic_muted": self.mic.user_muted,
+              "paused": Speaker.paused,
               "volume": round(Speaker.volume * 100),
               "creature": (self.show.on_stage or {}).get("name") if self.show else None,
               "creature_window": self.show.screen if self.show else None,

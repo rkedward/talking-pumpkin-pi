@@ -22,7 +22,7 @@ function log(text, cls = "info") {
 
 // ---- Idle video (e.g. AtmosFX singing pumpkins) while he waits; the live face takes over for a visit ----
 const idleEl = $("idle");
-let idleOn = false, idleTimer = null, faceHidden = false;   // faceHidden: skip drawing (the Pi's CPU goes to the video)
+let idleOn = false, idleTimer = null, faceHidden = false, paused = false;   // faceHidden: skip drawing (the Pi's CPU goes to the video)
 function idleVideo(ev) {
   const fade = `${ev.fade ?? 1}s`;
   idleEl.style.transition = $("face").style.transition = `opacity ${fade}`;
@@ -47,7 +47,7 @@ function idleVideo(ev) {
     } else {
       idleEl.loop = true;      // no soundtrack: just loop the picture
     }
-    idleEl.play().catch(() => {});
+    if (!paused) idleEl.play().catch(() => {});
     idleEl.style.opacity = 1;
     $("face").style.opacity = 0;
     setTimeout(() => { if (idleOn) faceHidden = true; }, (ev.fade ?? 1) * 1000 + 100);
@@ -73,6 +73,11 @@ function connect() {
       face.showGuide = ev.on;
     } else if (ev.t === "idle" && !REMOTE) {
       idleVideo(ev);
+    } else if (ev.t === "pause") {
+      paused = ev.on;
+      if (idleOn) ev.on ? idleEl.pause() : (idleEl.loop && idleEl.play().catch(() => {}));   // a synced clip restarts from its own "idle" event
+      const b = $("pauseBtn");
+      if (b) b.textContent = ev.on ? "▶ Resume" : "⏸ Pause";
     } else if (ev.t === "scare") {
       face.scare(ev.dark_ms, ev.ms);
     } else if (ev.t === "surprise") {
@@ -118,6 +123,8 @@ setInterval(async () => {
     }
     if (s.volume !== undefined && !volDragging) { $("vol").value = s.volume; $("volVal").textContent = `${s.volume}%`; }
     if (s.mic_muted) line += " · MIC MUTED";
+    if (s.paused) line += " · PAUSED";
+    if (s.paused !== undefined && $("pauseBtn")) $("pauseBtn").textContent = s.paused ? "▶ Resume" : "⏸ Pause";
     if (s.fake) line += " · FAKE MODE";
     stateEl.textContent = line;
   } catch { stateEl.textContent = state; }
@@ -168,6 +175,7 @@ document.addEventListener("keydown", (e) => {
     case "escape": post("end"); break;
     case "f": post("flip"); break;
     case "m": post("mute"); break;
+    case "p": post("pause"); break;
     case "c": post("guide"); break;
     case "enter": document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen(); break;
   }

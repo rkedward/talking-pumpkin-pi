@@ -45,7 +45,7 @@ class Hub:
         if event.get("t") == "log":
             with self.lock:
                 self.recent_logs = (self.recent_logs + [event])[-40:]
-        elif event.get("t") in ("calib", "window_calib", "show", "face_warp", "idle"):   # sticky: new pages get the latest alignment
+        elif event.get("t") in ("calib", "window_calib", "show", "face_warp", "idle", "pause"):   # sticky: new pages get the latest alignment
             with self.lock:
                 self.sticky[(event["t"], event.get("screen"))] = event
         with self.lock:

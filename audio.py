@@ -194,6 +194,9 @@ class Listener:
                 frame = self.mic.frames.get(timeout=0.1)
             except queue.Empty:
                 continue
+            if Speaker.paused:                                # paused: nobody is talking over him
+                recent, loud_flags = [], []
+                continue
             recent = (recent + [frame])[-(window + 10):]     # what they said, plus 300 ms before
             refs = (refs + [self.mic.heard_level])[-12:]      # what he played in the last ~0.35 s
             rms = float(np.sqrt(np.mean(frame.astype(np.float32) ** 2)))
@@ -263,6 +266,11 @@ class Listener:
         flagged, flag_max = 0, 0.0        # frames the mic array called voice, and the loudest of them (log)
         recent = collections.deque(maxlen=330)   # ~10 s of frame levels: the room's floor is a low percentile
         while not should_stop():
+            if Speaker.paused:              # nothing wakes him while paused
+                self.mic.flush()
+                pre_roll, voiced, chunks, speech, hits, burst = [], [], [], False, [], 0
+                time.sleep(0.1)
+                continue
             if not self.mic.ok or stt is None:
                 time.sleep(0.1)
                 continue
@@ -374,6 +382,11 @@ class Listener:
                 return typed.get_nowait()
             except queue.Empty:
                 pass
+            if Speaker.paused:
+                self.mic.flush()
+                deadline = max(deadline, time.time() + 2)   # after Resume, a moment to start talking again
+                time.sleep(0.1)
+                continue
             if not speech and time.time() > deadline:
                 return None
             if not self.mic.ok or self.stt is None:
@@ -857,6 +870,7 @@ class Speaker:
 
     BLOCK_S = 1 / 60
     volume = 1.0   # shared by the pumpkin and his assistants; set from the debug panel (0 .. 1.5)
+    paused = False # the Pause button: every sound holds where it is until it's cleared
     # One sound at a time: a speaker opened directly (like the mic array's jack, hw:2,0) can't play two
     # streams at once, so overlapping speech (a face demo during an echo test, say) waits its turn.
     _output_lock = threading.RLock()
@@ -1139,6 +1153,12 @@ class Speaker:
         for out, level, rms in items:
             if should_stop():
                 break
+            if Speaker.paused:                               # hold right here, mid-word if need be
+                while Speaker.paused and not should_stop():
+                    time.sleep(0.05)
+                self._next_heard = None
+                if should_stop():
+                    break
             now = time.time()
             if self._next_heard is None or self._next_heard < now:      # start, or after a gap/underrun
                 self._next_heard = now + latency
