@@ -10,3 +10,4 @@ static/echotest.wav
 static/atmos/
 *.s16
 wakeclips/
+scenesync_state.json
