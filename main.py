@@ -26,11 +26,13 @@ import numpy as np
 import brain
 import tunes
 import config
+from button import Candy, WakeButton
 from audio import Listener, Microphone, OpenAISTT, Speaker, WhisperSTT, make_tts
 from align import Aligner
 from doa import ReSpeakerDOA
 from home import Home
 from props import Props
+from scenesync import SceneSync, SceneSyncShow
 from sideshow import SideShow
 from vision import Vision
 from web import Hub, serve
@@ -43,6 +45,15 @@ WRAPUPS = [
     "I'd love to chat all night, but more trick-or-treaters are coming. Grab some candy and have a spook-tacular Halloween! Ho ho ho!",
     "Okay, my candle's flickering! Take some candy, and happy Halloween! Hee hee!",
 ]
+WAKE_LINES = [   # button shows: he was asleep until they pressed it
+    "Huh? Wha? Who woke me up? Ooh, visitors!", "Yaaawn! Oh! Hello there! Did somebody press my button?",
+    "Whoa! I'm awake, I'm awake! Who's there?", "Mmm, five more minutes... Oh! Trick-or-treaters!",
+]
+CANDY_LINES = ["Wait, don't forget your treat! Hold your bag under my candy chute!",
+               "Before you go, a treat! Hold your bag under the chute!"]
+QUIET_INVITE = ("(Nobody has said anything for a while, but they're still standing there. Maybe they're shy: invite "
+                "them to do something fun with you.)")
+PRESSED_AGAIN = "(They pressed your big wake-up button again!)"
 SILLY_FACES = {"silly", "tongue", "crosseyed", "wink", "dizzy", "scared"}
 FLASH_BEAT_S = 1.2   # a silly face shows this long before he starts talking (the face page flashes it 1.5 s)
 NUDGES = ["Hello? Are you still there?", "Helloooo? Anybody still there?", "Did you sneak off with my candy? Are you still there?"]
@@ -165,6 +176,12 @@ class Pumpkin:
         # before a visit starts.
         self.local_stt = stt if getattr(stt, "local", False) else getattr(stt, "backup", None) or stt
         self.sound = str(cfg["visit"]["trigger"]).lower() == "sound"
+        self.button_mode = str(cfg["visit"]["trigger"]).lower() == "button"   # shows started by the big button
+        self.wake_trigger = None    # what set force_greet: "button", ...
+        self._pressed_at = 0.0
+        if self.button_mode:
+            self.log("visits start with the button (or the doorbell, Greet or Home Assistant) and last until the "
+                     "group leaves")
         self.last_activity = time.time()
         self._voice_seen = (None, 0.0)   # last direction a voice came from, and when
         if self.sound:
@@ -188,6 +205,18 @@ class Pumpkin:
                             {n: sc["where"] for n, sc in self.screens.items()}, self.show.online)
         else:
             brain.configure(cfg["claude"])
+        self.max_summons = int(cfg["session" if self.button_mode else "window"]["max_summons"])
+        self.sync = SceneSync(cfg["scenesync"], self.log) if cfg["scenesync"]["enabled"] else None
+        if self.sync and not cfg["window"]["enabled"]:   # the window projectors run SceneSync: clips go there
+            show = SceneSyncShow(self.sync, cfg["scenesync"], self.log)
+            if show.creatures:
+                self.show, self.screens = show, show.windows
+                brain.configure(cfg["claude"], show.creatures,
+                                {n: w["where"] for n, w in show.windows.items()}, show.online)
+        self.candy = Candy(cfg["candy"], self.log)
+        self.candy_given = 0
+        brain.set_session(self.button_mode, self.max_summons, bool(cfg["candy"]["enabled"]))
+        self.button = WakeButton(cfg["button"], self.button_pressed, self.log)
         brain.set_look(self.sound)
         self._idle_setup(cfg["idle"])
         threading.Thread(target=self._face_loop, daemon=True, name="face").start()
@@ -338,7 +367,7 @@ class Pumpkin:
         if not self.show:
             return
         name = result.get("summon")
-        if name and self.summons < int(self.cfg["window"]["max_summons"]) and self.show.summon(name, result.get("window", "")):
+        if name and self.summons < self.max_summons and self.show.summon(name, result.get("window", "")):
             self.summons += 1
             self.look_gaze = self.screens[self.show.screen]["gaze"]
             self.look_window_until = time.time() + 3
@@ -434,8 +463,14 @@ class Pumpkin:
     def _visit(self, forced, trigger=None, said=None):
         self.idle_show(False)   # the singing pumpkins make way for the live face
         v = self.cfg["visit"]
+        show_mode = self.button_mode   # a show: no turn or time cap, ends when the group leaves
+        if show_mode:
+            self.button.showing()
+            if self.sync:   # the window clips around the porch go dark (in the background: it's a network call)
+                threading.Thread(target=self.sync.blackout, daemon=True, name="scenesync").start()
         self.abort_visit = False
         self.summons = 0
+        self.candy_given = 0
         self.listener.reset()
         self.vision.conversation(True)
         doorbell, self.doorbell_pending = self.doorbell_pending, False
@@ -460,6 +495,8 @@ class Pumpkin:
                 on_stage = self.show.active() if self.show else None
                 note = (f"They rang the doorbell, and your butler {on_stage['name']} answered it and is still visible."
                         if doorbell and on_stage else "They rang the doorbell." if doorbell else "")
+                if trigger == "button":
+                    note += " They pressed your big button and woke you up from a nap."
                 if self.sound:
                     if trigger == "knock":
                         note += " They knocked on the door."
@@ -479,7 +516,7 @@ class Pumpkin:
         worker.start()
         if hasattr(self.listener.stt, "warm_up"):   # connect to the cloud before they first speak
             threading.Thread(target=self.listener.stt.warm_up, daemon=True).start()
-        self.say(random.choice(FILLERS))      # covers the time Claude takes to look
+        self.say(random.choice(WAKE_LINES if show_mode else FILLERS))   # covers the time Claude takes to look
         worker.join()
         if result.get("costumes"):
             self.log(f"costumes: {'; '.join(result['costumes'])}")
@@ -488,15 +525,34 @@ class Pumpkin:
         cut_off = self.say(result.get("say"), interruptible=True)
         if cut_off is None:
             self.sideshow(result)
+            if result.get("give_candy"):
+                self.give_candy()
 
         started, turns = time.time(), 0
         self._pause_debt = 0.0
         brain_thread = None
         max_turns, max_s, game_on = int(v["max_turns"]), float(v["max_visit_s"]), False
+        sc = self.cfg["session"]
+        if show_mode:
+            max_turns, max_s = 10 ** 9, float(sc["max_s"]) or float("inf")
         pending_look, looks, nudged = self.sound and result.get("look"), 0, False
         self.last_activity = time.time()
         while not self.abort_visit:
-            if self.sound:   # nobody to watch walk away: a quiet spell ends the visit (after one nudge)
+            if show_mode:
+                ended = self._show_over(started, nudged)
+                if ended == "invite":
+                    self.last_activity = time.time()
+                    self.typed.put(QUIET_INVITE)   # goes to the brain like something they said
+                    ended = None
+                if ended == "nudge":
+                    nudged = True
+                    self.say(random.choice(NUDGES), interruptible=True)
+                    self.last_activity = time.time() - float(sc["quiet_end_s"]) / 2   # half as long to answer
+                    continue
+                if ended:
+                    self.goodbye(ended == "bye")
+                    break
+            elif self.sound:   # nobody to watch walk away: a quiet spell ends the visit (after one nudge)
                 quiet = time.time() - self.last_activity
                 if quiet >= float(v["quiet_end_s"]) and not pending_look:
                     if nudged:
@@ -540,7 +596,7 @@ class Pumpkin:
                 self.log(f"👂 {heard}", "heard")
                 timing, self.listener.timing = self.listener.timing, {}
                 if self._bye_re.search(heard):   # they said goodbye: wave them off right away
-                    self.say(random.choice(GOODBYES))
+                    self.goodbye(present=True)
                     break
             heard_at = time.time()
             self.set_state("thinking")
@@ -584,6 +640,8 @@ class Pumpkin:
                 continue
             brain_thread.join(timeout=10)
             pending_look = self.sound and reply.get("look") and not last
+            if reply.get("give_candy"):
+                self.give_candy()
             if last and not reply.get("play_song"):   # that reply was his goodbye
                 break
             self.sideshow(reply)
@@ -599,13 +657,93 @@ class Pumpkin:
         if self.show:
             self.show.dismiss()
         self.home.send("visit_end")
+        if show_mode:
+            if self.sync:   # the windows go back to their own schedules
+                threading.Thread(target=self.sync.release, daemon=True, name="scenesync").start()
+            self.button.waiting()
         self.reveal(False)
         self.vision.conversation(False)
         self.awake = False
         self.mood("neutral")
         self.props.expression("neutral")
 
+    def _camera_ok(self):
+        return self.vision.detector is not None and self.vision.last_frame is not None
+
+    def _show_over(self, started, nudged):
+        """Whether a button show is over: "gone" (nobody seen or heard for gone_s), "quiet" (nobody answered the
+        nudge), "bye" (max_s reached); or what to do about a quiet spell: "nudge" (are you still there?), "invite"
+        (they're in view but quiet: think of something to do with them); or None."""
+        sc, now = self.cfg["session"], time.time()
+        if now - started > float(sc["max_s"] or float("inf")):
+            return "bye"
+        heard_ago = now - self.last_activity
+        camera = self._camera_ok()
+        if camera:
+            seen_ago = now - self.vision.state()[3]
+            gone = float(sc["gone_s"])
+            if now - started > float(sc["grace_s"]) and seen_ago > gone and heard_ago > gone:
+                return "gone"
+            here = seen_ago <= gone
+        else:
+            here = False
+        if heard_ago >= float(sc["quiet_end_s"]):
+            if here:      # still in view but quiet (shy?): he invites them to play, never sends them off
+                return "invite"
+            return "quiet" if nudged else "nudge"
+        return None
+
+    def goodbye(self, present=False):
+        """He waves them off; in a show, a group still standing there gets its treat first if it hasn't yet."""
+        if (present and self.button_mode and self.cfg["candy"]["enabled"] and not self.candy_given
+                and self.cfg["session"]["candy_at_goodbye"] and not self.abort_visit):
+            self.say(random.choice(CANDY_LINES))
+            self.give_candy()
+            time.sleep(1.0)
+        self.say(random.choice(GOODBYES))
+
+    def give_candy(self):
+        if not self.cfg["candy"]["enabled"] or self.candy_given >= int(self.cfg["candy"]["per_session"]):
+            return
+        self.candy_given += 1
+        self.candy.dispense()
+
+    def button_pressed(self, source="button"):
+        """The big button (or its Home Assistant / debug-page stand-in): wakes him for a show; pressed again
+        during one, he reacts to it."""
+        if Speaker.paused:
+            return {"ok": True, "note": "paused"}
+        now = time.time()
+        if self.visit_active:
+            if now - self._pressed_at < float(self.cfg["button"]["again_s"]):
+                return {"ok": True, "note": "already awake"}
+            self._pressed_at = now
+            self.log(f"🔘 {source} pressed again")
+            self.typed.put(PRESSED_AGAIN)
+            return {"ok": True, "note": "already awake"}
+        self._pressed_at = now
+        self.log(f"🔘 {source}")
+        self.wake_trigger = "button"
+        self.force_greet = True
+        return {"ok": True}
+
+    def _run_button(self):
+        """Button shows: the idle video and songs play until someone presses the button (or the doorbell, Greet
+        or Home Assistant wakes him)."""
+        while True:
+            self.awake = False
+            self.set_state("idle")
+            self.idle_show(True)
+            while not self.force_greet:
+                time.sleep(0.05)
+            trigger, self.wake_trigger = self.wake_trigger or "remote", None
+            self.visit(True, trigger)
+            self.set_state("cooldown")
+            time.sleep(2.0)
+
     def run(self):
+        if self.button_mode:
+            return self._run_button()
         if self.sound:
             return self._run_sound()
         last_visit_end = -1e9
@@ -912,10 +1050,11 @@ class Pumpkin:
                                                  stt=wake_stt, knock=bool(v["knock"]),
                                                  knock_ratio=float(v["knock_ratio"]), knocks=int(v["knocks"]),
                                                  music=lambda: self._idle_playing, voice=self._array_voice())
-            trigger, said = got if got else ("remote", None)
+            trigger, said = got if got else (self.wake_trigger or "remote", None)
+            self.wake_trigger = None
             if trigger == "remote" and not self.force_greet and not self.typed.empty():
                 trigger, said = "words", self.typed.get_nowait()
-            self.log({"words": f"🔔 heard \"{said}\"", "knock": "🔔 knock knock",
+            self.log({"words": f"🔔 heard \"{said}\"", "knock": "🔔 knock knock", "button": "🔔 button",
                       "remote": "🔔 greet"}[trigger], "info")
             self.force_greet = False
             self.visit(True, trigger, said)
@@ -1123,6 +1262,12 @@ class Pumpkin:
                 return {"ok": True, "note": "already in a visit"}
             self.force_greet = True
             self.log("manual greet")
+        elif name == "button":
+            return self.button_pressed("button (remote)")
+        elif name == "candy":
+            if not self.cfg["candy"]["enabled"]:
+                return {"error": "the candy machine is off; set enabled = true under [candy]"}
+            self.candy.dispense()
         elif name == "end":
             self.abort_visit = True
             self.log("visit ended")
@@ -1461,7 +1606,9 @@ class Pumpkin:
               "creature": (self.show.on_stage or {}).get("name") if self.show else None,
               "creature_window": self.show.screen if self.show else None,
               "windows": list(self.screens) if self.show else [],
-              "windows_on": self.show.online() if self.show else []}
+              "windows_on": self.show.online() if self.show else [],
+              "show_mode": self.button_mode,
+              "windows_dark": bool(self.sync and self.sync.dark)}
         if self.doa and self.doa.available:
             st["doa_raw"] = self.doa.raw()
             st["doa_bearing"] = self.doa.bearing(max_age=3)

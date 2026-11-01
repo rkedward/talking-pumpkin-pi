@@ -11,6 +11,7 @@ off until you turn it on in `config.toml`, works without the others, and can be 
 | | What it adds | Extra hardware |
 |---|---|---|
 | **1. Core pumpkin** | Face on the pumpkin, camera, conversation, eyes that follow kids | Pi 5, camera, mic array, speaker, one projector |
+| Add-on: [Button shows](#add-on-button-shows) | Kids press a big glowing button: the music stops, a spotlight comes on and he wakes up for their own show; SceneSync windows go dark, and a candy machine can drop a treat | Arcade button, spotlight on a relay; optional SceneSync, candy machine |
 | Add-on: [Window side show](#add-on-window-side-show) | Jack's assistants appear in your windows; start with one window, add a second later | 1 or 2 window projectors |
 | Add-on: [Doorbell and Home Assistant](#add-on-doorbell-and-home-assistant) | The doorbell wakes the pumpkin, a light comes on | Home Assistant (your Pi 4), a doorbell and light it supports |
 | Add-on: [Fog and lights](#add-on-fog-and-lights) | A puff of fog and flashing lights when kids arrive | Relay, fog machine |
@@ -128,6 +129,77 @@ By default he listens instead of watching (`[visit] trigger = "sound"`):
 visit ends when they walk away.
 
 ## Add-ons
+
+### Add-on: Button shows
+
+On Halloween a pumpkin that waits for "trick or treat" over a singing-pumpkins video looks like one more
+decoration. A big glowing button gives kids something obvious to do, and the change of scene tells them
+something special is happening:
+
+1. While he waits, the idle video and songs play, SceneSync runs its normal clips in the windows, and the
+   button's light slowly breathes.
+2. A kid presses it: the music stops, the spotlight flickers on, the SceneSync windows near the porch go
+   black, and he wakes up ("Huh? Who woke me up?") and greets the group by their costumes.
+3. It's their show: no turn or time cap. Jokes, the song game (more than one round), silly faces, clips in
+   the windows ("Look at the garage!"), and a treat from the candy machine when they've earned it. Pressing
+   the button again makes him react; if they go quiet while still standing there, he invites them to play.
+4. When nobody has been seen or heard for 8 seconds, or they say bye, he says goodbye (with a treat if they
+   haven't had one), the spotlight goes off, the windows go back to their SceneSync schedules and the music
+   comes back.
+
+```
+[visit]
+trigger = "button"
+
+[props]
+lights_pin = 27                # the spotlight, on the power relay
+
+[button]
+pin = 22                       # arcade button: one leg to GPIO22, the other to ground
+led_pin = 23                   # its LED, through a small MOSFET board (the LED wants 12 V)
+```
+The button works in the other modes too (it starts a normal visit). Without the hardware, **🔘 Button** on
+the debug page does the same, and Home Assistant can press it for a wireless button (a Zigbee button whose
+automation calls `rest_command` with `url: "http://<pumpkin>:8000/api/button"`, `method: post`,
+`payload: "{}"`). The eyes follow the group with the camera, so the camera has to see the spot where kids
+stand; `[session] gone_s` sets how long nobody may be in view before the show ends.
+
+**SceneSync windows.** With [SceneSync](https://github.com/rkedward/scene-sync) running on the same Pi
+(it's light), make a group in its dashboard called "Porch" with the projectors that should go dark, then:
+```
+[scenesync]
+enabled = true
+url = "http://127.0.0.1:8080"
+group = "Porch"
+```
+and put `SCENESYNC_PASSWORD=<dashboard password>` in `.env`. To let him call up clips during a show, upload
+them in the SceneSync dashboard and list them here, with the windows by projector name:
+```
+[scenesync.windows."Garage"]
+where = "the garage window on your left"
+gaze = [-1.0, 0.0]
+
+[scenesync.clips.Boo]
+media = "boo-wave.mp4"          # file name in the SceneSync dashboard
+description = "Boo the ghost floats up to the glass and waves"
+windows = ["Garage"]            # optional
+```
+A clip plays with its own sound and goes back to black when it ends; up to `[session] max_summons` (3) per
+show. SceneSync holds the windows dark until the show ends; if the pumpkin crashes or restarts mid-show, it
+hands them back to their schedules when it starts again. If SceneSync can't be reached the show still runs
+and the windows keep playing. The pumpkin's own window page (below) isn't used when `[window]` is off.
+
+**Candy machine (optional).** A twist-knob cereal dispenser with a paddle wheel, its knob replaced by a
+continuous-rotation servo on channel 2 of the eyebrow servo HAT, hidden behind the pumpkin with a chute out
+front. Claude decides when a group has earned a treat (once per show), and a group that says bye without one
+gets it on the way out. **🍬 Candy** on the debug page drops one to test.
+```
+[candy]
+enabled = true
+channel = 2
+turn_s = 0.6                    # tune until one paddle pocket drops; throttle = -1.0 turns it the other way
+```
+Wrapped candy only, small enough for the paddle pockets (mini packs and small round candy; fun-size bars jam).
 
 ### Add-on: Window side show
 
@@ -397,6 +469,8 @@ Open http://localhost:8000 (add `?debug` for the panel). On Linux install `libpo
 | `audio.py` | Mic, voice activity detection, Whisper speech recognition, Piper/ElevenLabs/espeak voice, lip-sync levels. |
 | `doa.py` | Voice direction from the reSpeaker XVF3800 or ReSpeaker v2.0 mic array. |
 | `props.py` | Eyebrow servos, fog and light relays. |
+| `button.py` | The wake-up button and its light; the candy machine. |
+| `scenesync.py` | Talks to SceneSync: dark windows during a show, clips in a window, schedules back after. |
 | `sideshow.py`, `static/window.*` | Second-projector side show: creature catalog, creature voice, the window page. |
 | `brain.py` | Claude prompts: costume greeting and Q&A. |
 | `home.py` | Home automation: doorbell in, webhooks out. |

@@ -20,9 +20,41 @@ min_height = 0.25              # lower (e.g. 0.15) if kids stand far from the ca
 max_turns = 3
 max_visit_s = 45
 # trigger = "sound"            # sound: "trick or treat" / hello, a knock, the doorbell or Greet start a visit and
-                               # the camera only takes a picture; camera: person detection starts it (old way)
+                               # the camera only takes a picture; camera: person detection starts it (old way);
+                               # button: kids press the big button for a show that lasts until they leave ([session])
 # knock_ratio = 8.0            # higher = a knock has to be louder to count
 # quiet_end_s = 12             # quiet this long: "are you still there?", then goodbye
+
+# Button shows (trigger = "button"): the music stops, the spotlight (lights_pin) comes on, SceneSync's windows
+# go dark and he wakes up for the group. The show ends when nobody is seen or heard for gone_s, or on a bye word.
+# [session]
+# gone_s = 8
+# quiet_end_s = 40             # quiet this long: he invites them to play (in view) or asks if they're still there
+# max_s = 0                    # 0 = no time limit
+# max_summons = 3              # SceneSync window clips per show
+
+# [button]
+# pin = 22                     # the big arcade button, other leg to ground
+# led_pin = 23                 # its LED, through a small MOSFET board (breathes while he waits, lit during a show)
+
+# SceneSync runs the window projectors (github.com/rkedward/scene-sync). Put the dashboard password here or in
+# .env as SCENESYNC_PASSWORD.
+# [scenesync]
+# enabled = true
+# url = "http://127.0.0.1:8080"
+# group = "Porch"              # this group goes dark during a show
+# [scenesync.windows."Garage"]  # projector name as the dashboard shows it
+# where = "the garage window on your left"
+# gaze = [-1.0, 0.0]
+# [scenesync.clips.Boo]         # a clip he can call up during a show
+# media = "boo-wave.mp4"        # its file name in the SceneSync dashboard
+# description = "Boo the ghost floats up to the glass and waves"
+# windows = ["Garage"]          # optional: only in these windows
+
+# [candy]
+# enabled = true               # servo candy machine on the eyebrow servo HAT
+# channel = 2
+# turn_s = 0.6                 # one treat per turn: tune until one paddle pocket drops
 
 [mic]
 device = "ReSpeaker"           # part of the mic's name; falls back to the default mic

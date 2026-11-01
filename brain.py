@@ -28,6 +28,9 @@ LOOK = False            # sound-triggered visits: the camera only looks when ask
 CREATURES = []          # [{"name": ..., "description": ..., "windows": [...]}] that can appear in a window
 WINDOWS = {}            # window name -> where it is, as the pumpkin tells kids ("the front door window behind you")
 ONLINE = lambda: list(WINDOWS)   # windows whose projector is switched on right now
+SESSION = False         # [visit] trigger = "button": the kids woke him with the button; a show, not a quick chat
+MAX_SUMMONS = 1         # window creatures per visit
+CANDY = False           # a candy machine he can work ("give_candy" in the reply)
 
 
 def configure(cfg, creatures=(), windows=None, online=None):
@@ -45,6 +48,12 @@ def configure(cfg, creatures=(), windows=None, online=None):
     OPENAI_MODEL, OPENAI_REASONING = cfg.get("openai_model", OPENAI_MODEL), cfg.get("openai_reasoning", "")
     CREATURES, WINDOWS = list(creatures), dict(windows or {})
     ONLINE = online or (lambda: list(WINDOWS))
+
+
+def set_session(on, max_summons=1, candy=False):
+    """Button shows: a longer visit, more window tricks, and a candy machine if one is connected."""
+    global SESSION, MAX_SUMMONS, CANDY
+    SESSION, MAX_SUMMONS, CANDY = bool(on), max(1, int(max_summons)), bool(candy)
 
 
 def set_look(on):
@@ -87,6 +96,15 @@ def sideshow_prompt():
     else:
         example = WINDOWS[on[0]]
         where, extra = example + ".", ""
+    times = "once" if MAX_SUMMONS == 1 else f"{MAX_SUMMONS} times"
+    if all(c.get("silent") for c in creatures):
+        speak = """- Each appearance is a short scene with its own sounds; the assistant can't hear the kids or talk back.
+  Introduce it, then react to it after ("Did you see Boo wave at you?"). Always leave "creature_says" empty.
+- Leave "summon" empty when not using it."""
+    else:
+        speak = """- While an assistant is visible it can speak for itself: put its line in "creature_says" (short, in its own
+  character, loyal to you and happy to help; silly and friendly with kids, spookier only with teenagers). Kids may talk to it, and it can answer.
+- Leave "summon" and "creature_says" empty when not using them."""
     return f"""
 
 Side show: you have assistants, creatures who live inside the house and help you run your Halloween
@@ -95,11 +113,9 @@ Treat them as your helpers and sidekicks: call them by name ("Knuckles, come say
 the best costume, telling a joke, doing a silly trick), and banter with them. Your assistants:
 {names}
 - To summon one, set "summon" to its exact name and, in "say", tell the kids where to look
-  (for example "Look at {example}!"). Summon at most once per visit, at a fun moment such as
+  (for example "Look at {example}!"). Summon at most {times} per visit, at a fun moment such as
   after your joke or when kids ask for something spooky. Skip it for very small or nervous kids.
-- While an assistant is visible it can speak for itself: put its line in "creature_says" (short, in its own
-  character, loyal to you and happy to help; silly and friendly with kids, spookier only with teenagers). Kids may talk to it, and it can answer.
-- Leave "summon" and "creature_says" empty when not using them.{extra}"""
+{speak}{extra}"""
 
 
 MOODS = ["happy", "excited", "surprised", "curious", "thinking", "sly", "sad", "spooky", "proud",
@@ -117,6 +133,10 @@ def output_schema(with_costumes):
                          "description": "true to take a fresh look with your eyes right after you speak, e.g. "
                                         "when you've asked them to step in front of you so you can see them."}
         required.append("look")
+    if CANDY:
+        props["give_candy"] = {"type": "boolean",
+                               "description": "true to drop a treat from your candy machine right after you speak."}
+        required.append("give_candy")
     if GAME and not with_costumes:
         props["play_song"] = {"type": "string", "enum": [""] + list(tunes.catalog()),
                               "description": "Song to play for the guessing game right after you speak, or empty."}
@@ -207,6 +227,8 @@ def game_prompt():
         listed = ", ".join(f"{sid} ({cat[sid]['title']}{', teens only' if cat[sid]['teens'] else ''})" for sid in ids)
         kinds.append(f"- {kind}: {listed}")
     songs = "\n".join(kinds)
+    one_song = ("- After a round you may offer another one (a different song), as long as they're having fun."
+                if SESSION else "- One song per visit: after the round, don't offer another song; wish them a happy Halloween instead.")
     return f"""
 
 Guess-the-song game: you can play a few seconds of a song and the trick-or-treaters guess it.
@@ -224,7 +246,7 @@ Guess-the-song game: you can play a few seconds of a song and the trick-or-treat
   (close enough counts too). If not, give a fun hint (what the song is about,
   which movie it's from, or something about the princess, like "she has really long hair") and let them guess
   once more. If that guess is wrong too, tell them the answer kindly and wrap up. Only one clue per round.
-- One song per visit: after the round, don't offer another song; wish them a happy Halloween instead. Leave "play_song" empty otherwise.
+{one_song} Leave "play_song" empty otherwise.
 Songs you can play, by kind:
 {songs}"""
 
@@ -238,9 +260,25 @@ costume!") and set "look" to true; you'll get a fresh look right after you speak
 if you still can't see them, stop talking about seeing them and just chat (ask what they're dressed as)."""
 
 
+SESSION_PROMPT = """
+
+Your show: you were fast asleep until the trick-or-treaters pressed the big glowing button in front of you. The
+music stopped, a spotlight came on and you woke up just for them, so this is their own show and nobody is waiting
+in line. Take your time with them: jokes, riddles, the song game, silly faces, your window tricks. Still keep
+every reply short (one or two sentences) and give them lots of turns. If they press the button again while
+you're awake, have fun with it ("I'm already awake! Ha!"). Say goodbye only when they say they're leaving."""
+
+CANDY_PROMPT = """
+
+Your candy machine: you can drop a treat down your candy chute by setting "give_candy" to true (it drops right
+after you speak). Tell them to hold their bag under the chute. Give it once per group, when they've earned it:
+after a game, a great joke or costume, or as they leave. Never more than once; never just because they ask."""
+
+
 def persona():
     laugh = LAUGH_ON.replace("{laugh_text}", LAUGH_TEXT) if LAUGH else LAUGH_OFF
-    return PERSONA.replace("{laugh}", laugh) + sideshow_prompt() + game_prompt() + (LOOK_PROMPT if LOOK else "")
+    return (PERSONA.replace("{laugh}", laugh) + sideshow_prompt() + game_prompt() + (LOOK_PROMPT if LOOK else "")
+            + (SESSION_PROMPT if SESSION else "") + (CANDY_PROMPT if CANDY else ""))
 
 
 def _no_laughs(text):
@@ -450,6 +488,7 @@ def greet(image_b64, people, note=""):
     audience = "teens" if data.get("audience") == "teens" else "kids"
     mood = data.get("mood") if data.get("mood") in MOODS else "happy"
     result = {"costumes": costumes, "audience": audience, "say": say, "mood": mood, "look": bool(data.get("look")),
+              "give_candy": CANDY and bool(data.get("give_candy")),
               **_sideshow_fields(data)}
 
     # Keep a text-only history; the image isn't re-sent on every question.
@@ -549,7 +588,7 @@ def chat(sid, text, on_stage=None, cut_off=None, on_say=None, on_mood=None, imag
     if session.get("song"):
         title = tunes.catalog().get(session["song"], {}).get("title", session["song"])
         note += (f" (Game: the song you played this round is {session['song']}: {title}. If this is a guess, judge it"
-                 " against that song; that's the only song for this visit.)")
+                 " against that song" + (".)" if SESSION else "; that's the only song for this visit.)"))
     if session.get("puppet"):
         with _lock:
             lines, session["puppet"] = session["puppet"], []
@@ -585,11 +624,12 @@ def chat(sid, text, on_stage=None, cut_off=None, on_say=None, on_mood=None, imag
         data = _parse(call_claude(request, schema=output_schema(False),
                                   on_text=_SayStreamer(on_say, on_mood) if on_say else None))
     song = data.get("play_song") if data.get("play_song") in tunes.catalog() else ""
-    if song and session.get("song") and (song != session["song"] or "again" not in (text or "").lower()):
+    if song and session.get("song") and not SESSION and (song != session["song"] or "again" not in (text or "").lower()):
         song = ""   # one song per visit; replay it only if they ask to hear it again
     if song:
         session["song"] = song
     result = {"mood": data.get("mood") if data.get("mood") in MOODS else "happy", "play_song": song,
+              "give_candy": CANDY and bool(data.get("give_candy")),
               "look": bool(data.get("look")), "say": _cap(_no_laughs(data.get("say"))) or "Ooh, let's talk about something else. Like candy! Have you picked one yet?",
               **_sideshow_fields(data)}
     with _lock:

@@ -25,6 +25,30 @@ Core total: roughly **$440-530** depending on the projector (about $360 for item
 Everything below is an add-on: optional, independent of the others, and fine to add after the core
 pumpkin is working.
 
+## Add-on: button shows
+
+Prices checked 2026-11-01; approximate.
+
+| # | Part | Link | Price |
+|---|---|---|---|
+| 24 | Massive Arcade Button with LED, 100 mm (red, green, blue, white or yellow) | [Adafruit 1186](https://www.adafruit.com/product/1186) (yellow; colors on the same page) | ~$10 |
+| 25 | Small logic-level MOSFET board, so the Pi can dim the button's 12 V LED, plus a 12 V adapter | [Amazon search](https://www.amazon.com/s?k=mosfet+trigger+switch+module+pwm) | ~$8 |
+| 26 | 4-conductor thermostat or alarm wire from the button to the Pi (length to suit) | [Amazon search](https://www.amazon.com/s?k=18%2F4+thermostat+wire) | ~$10-20 |
+| 27 | Plug-in LED spotlight or flood (warm white or orange), switched by the power relay (item 16) | [Amazon search](https://www.amazon.com/s?k=plug+in+led+spotlight+outdoor) | ~$20-30 |
+| 28 | Optional wireless button instead of 24-26: a Zigbee button in Home Assistant (e.g. Aqara mini switch) | [Amazon search](https://www.amazon.com/s?k=aqara+wireless+mini+switch) | ~$15-20 |
+
+Mount the button kid-high on a small box or a painted tombstone, with a sign: "Press to wake the pumpkin".
+
+## Add-on: candy machine
+
+| # | Part | Link | Price |
+|---|---|---|---|
+| 29 | Twist-knob cereal dispenser with a rotating paddle wheel | [Amazon search](https://www.amazon.com/s?k=cereal+dispenser+paddle+wheel) | ~$20-30 |
+| 30 | Continuous rotation servo (FeeTech FS5103R), turns the paddle | [Adafruit 154](https://www.adafruit.com/product/154) | ~$12 |
+| 31 | Short 3-4 in pipe or a cardboard chute into a bowl | hardware store | ~$5 |
+
+Plugs into the eyebrow servo HAT (items 12, 14, 15), channel 2; get those if you don't have them.
+
 ## Add-on: window side show
 
 | # | Part | Link | Price |

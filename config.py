@@ -50,6 +50,9 @@ DEFAULTS = {
         # What starts a visit: "sound" = someone says hello / trick or treat, knocks, rings the doorbell (or the
         # remote's Greet); the camera only takes a picture for costumes and never tracks. "camera" = the old way:
         # person detection starts the visit, the eyes follow people, and the visit ends when they walk away.
+        # "button" = a show: kids press the big button (or the doorbell / Greet / Home Assistant), the music
+        # stops, the spotlight comes on and he wakes up for that group, with no turn or time cap ([session]).
+        # A press of the button starts a visit in the other modes too.
         "trigger": "sound",
         "wake_words": ["trick or treat", "hello", "knock", "doorbell", "door bell", "ding dong"],
         "bye_words": ["goodbye", "good bye", "bye", "adios", "adiós"],   # a visitor saying one of these ends the visit
@@ -63,6 +66,45 @@ DEFAULTS = {
         "knocks": 2,                  # knocks within 1.5 s that count ("knock knock")
         "cooldown_s": 0,              # sound mode: pause after a visit before listening for the next one
         "quiet_end_s": 12,            # sound mode: this long with nobody talking = "are you still there?", then bye
+    },
+    "session": {
+        # trigger = "button": how a show ends. The eyes follow the group with the camera, and the show ends when
+        # nobody has been seen or heard for gone_s, when they say a bye word, or (no camera) after quiet_end_s
+        # of silence and one "are you still there?".
+        "gone_s": 8,
+        "quiet_end_s": 40,            # nobody talking this long: "are you still there?"; as long again: goodbye
+        "grace_s": 15,                # at the start, wait this long for them to step into view before giving up
+        "max_s": 0,                   # a show never runs longer than this (seconds); 0 = no limit
+        "max_summons": 3,             # window clips per show
+        "candy_at_goodbye": True,     # a group that didn't earn a treat yet gets one as he says goodbye
+    },
+    "button": {
+        "pin": 0,                     # GPIO of the big arcade button (other side to ground); 0 = none
+        "led_pin": 0,                 # GPIO driving the button's LED (through a MOSFET board); 0 = none
+        "again_s": 8,                 # pressed again during a show: he reacts, at most this often
+    },
+    "scenesync": {
+        # SceneSync (github.com/rkedward/scene-sync) runs the window projectors. During a show the pumpkin
+        # blacks out one SceneSync group, can play clips in its windows, and hands them back to their schedules
+        # after. The dashboard password goes here or in .env as SCENESYNC_PASSWORD.
+        "enabled": False,
+        "url": "http://127.0.0.1:8080",
+        "password": "",
+        "group": "Porch",             # the group that goes dark during a show (as named in the dashboard)
+        # Windows the pumpkin can send clips to, by projector name as the dashboard shows it:
+        #   [scenesync.windows."Garage"]  where = "the garage window on your left"  gaze = [-1.0, 0.0]
+        "windows": {},
+        # Clips he can call up, by name; media = the file name uploaded to SceneSync:
+        #   [scenesync.clips.Boo]  media = "boo-wave.mp4"  description = "Boo the ghost waves"  windows = ["Garage"]
+        "clips": {},
+    },
+    "candy": {
+        "enabled": False,             # candy machine: a continuous-rotation servo turns a cereal dispenser's paddle
+        "servo": "pca9685",           # pca9685 (the eyebrow servo HAT) | gpio
+        "channel": 2,                 # PCA9685 channel, or GPIO pin for the gpio backend
+        "throttle": 1.0,              # -1..1: speed and direction of the paddle
+        "turn_s": 0.6,                # how long it turns for one treat (tune until one paddle pocket drops)
+        "per_session": 1,             # treats per visit
     },
     "mic": {
         "device": "ReSpeaker",        # part of the input device name; falls back to the default mic
